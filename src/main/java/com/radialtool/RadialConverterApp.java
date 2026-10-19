@@ -3,27 +3,30 @@ package com.radialtool;
 import com.github.kwhat.jnativehook.GlobalScreen;
 import com.github.kwhat.jnativehook.keyboard.NativeKeyEvent;
 import com.github.kwhat.jnativehook.keyboard.NativeKeyListener;
-import com.github.kwhat.jnativehook.mouse.NativeMouseEvent;
-import com.github.kwhat.jnativehook.mouse.NativeMouseInputListener;
 
-import javafx.animation.PauseTransition;
 import javafx.animation.ScaleTransition;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Pos;
 import javafx.geometry.Rectangle2D;
+import javafx.scene.Cursor;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.effect.DropShadow;
 import javafx.scene.image.ImageView;
+import javafx.scene.input.KeyCode;
 import javafx.scene.input.TransferMode;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
+import javafx.scene.paint.CycleMethod;
+import javafx.scene.paint.LinearGradient;
+import javafx.scene.paint.Stop;
 import javafx.scene.shape.*;
 import javafx.scene.text.Font;
 import javafx.scene.text.FontWeight;
 import javafx.scene.text.Text;
+import javafx.stage.FileChooser;
 import javafx.stage.Screen;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
@@ -31,112 +34,199 @@ import javafx.util.Duration;
 
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
+import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 import org.apache.pdfbox.rendering.PDFRenderer;
 import org.apache.pdfbox.text.PDFTextStripper;
 
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xslf.usermodel.XMLSlideShow;
+import org.apache.poi.xslf.usermodel.XSLFShape;
+import org.apache.poi.xslf.usermodel.XSLFSlide;
+import org.apache.poi.xslf.usermodel.XSLFTextShape;
+import org.apache.poi.xwpf.usermodel.XWPFDocument;
+import org.apache.poi.xwpf.usermodel.XWPFParagraph;
+
 import javax.imageio.ImageIO;
 import java.awt.AlphaComposite;
+import java.awt.Dimension;
 import java.awt.GradientPaint;
 import java.awt.Graphics2D;
 import java.awt.MouseInfo;
 import java.awt.Point;
 import java.awt.RenderingHints;
+import java.awt.geom.Rectangle2D.Double;
 import java.awt.geom.RoundRectangle2D;
 import java.awt.image.BufferedImage;
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.InputStreamReader;
 import java.nio.file.Files;
-import java.util.Arrays;
-import java.util.List;
+import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.stream.Collectors;
 
 public class RadialConverterApp extends Application {
 
-    // 1. Detect OS (Mac vs Windows)
     private static final boolean IS_MAC = System.getProperty("os.name").toLowerCase().contains("mac");
+    private static final String OS_FONT = IS_MAC ? "SF Pro Display" : "Segoe UI Variable";
 
-    // 2. OS-Specific Design Tokens
-    private static final String OS_FONT = IS_MAC ? "SF Pro Display" : "Segoe UI Semibold";
-    private static final Color SLICE_BASE = IS_MAC ? Color.rgb(248, 222, 198, 0.92) : Color.rgb(32, 32, 35, 0.94);
-    private static final Color SLICE_HOVER = IS_MAC ? Color.rgb(235, 87, 52, 0.96) : Color.rgb(0, 120, 212, 0.96);
-    private static final Color TEXT_BASE = IS_MAC ? Color.rgb(70, 50, 40) : Color.rgb(240, 240, 240);
-    private static final Color TEXT_HOVER = Color.WHITE;
-    private static final Color STROKE_COLOR = IS_MAC ? Color.rgb(255, 255, 255, 0.80) : Color.rgb(255, 255, 255, 0.20);
+    private static final double SIZE = 260;
+    private static final double OUTER_R = 104;
+    private static final double INNER_R = 40;
 
     private Stage radialStage;
-    private Pane wheelPane; // Using Pane instead of Group so the circle NEVER shifts or clips!
+    private Pane wheelPane;
     private boolean isToolsMode = false;
-    private List<String> currentSlices = Arrays.asList("DOCX", "JPG", "PNG", "TXT");
+    private boolean isOsDarkMode = true;
+    private List<String> currentSlices = Arrays.asList("JPG", "PNG", "HEIC", "WEBP", "PDF");
     private int hoveredIndex = -1;
     private boolean centerHovered = false;
-    private File draggedFile = null;
-    private PauseTransition modeSwitchTimer;
-
-    // Extra padding around OUTER_R so drop shadow and circle never clip
-    private static final double SIZE = 380;
-    private static final double OUTER_R = 145;
-    private static final double INNER_R = 54;
+    private File activeFile = null;
 
     @Override
     public void start(Stage primaryStage) {
-        Platform.setImplicitExit(false); // Runs invisibly in the background
+        Platform.setImplicitExit(false);
+        isOsDarkMode = detectOsDarkMode();
 
         radialStage = new Stage(StageStyle.TRANSPARENT);
         radialStage.setAlwaysOnTop(true);
 
         wheelPane = new Pane();
         wheelPane.setPrefSize(SIZE, SIZE);
-        wheelPane.setMinSize(SIZE, SIZE);
-        wheelPane.setMaxSize(SIZE, SIZE);
         wheelPane.setStyle("-fx-background-color: transparent;");
 
         DropShadow shadow = new DropShadow();
-        shadow.setRadius(IS_MAC ? 24 : 14);
-        shadow.setColor(Color.rgb(0, 0, 0, IS_MAC ? 0.32 : 0.50));
+        shadow.setRadius(20);
+        shadow.setColor(Color.rgb(0, 0, 0, 0.65));
         wheelPane.setEffect(shadow);
 
         Scene scene = new Scene(wheelPane, SIZE, SIZE, Color.TRANSPARENT);
-        setupDragAndDrop(scene);
+        setupInteractions(scene);
 
-        // Hold file in center ring for 500ms to toggle between Convert <-> Tools
-        modeSwitchTimer = new PauseTransition(Duration.millis(500));
-        modeSwitchTimer.setOnFinished(e -> toggleMode());
+        radialStage.focusedProperty().addListener((obs, wasFocused, isNowFocused) -> {
+            if (!isNowFocused && radialStage.isShowing()) {
+                radialStage.hide();
+            }
+        });
 
         radialStage.setScene(scene);
         drawRadialMenu();
+        registerGlobalShortcutHook();
 
-        // Start Global Invisible Listener (Command + Drag OR Shift + Drag)
-        registerGlobalHook();
-
-        System.out.println("====================================================");
-        System.out.println("Radial Drop Tool is running invisibly in background!");
-        System.out.println("Drag any file and press COMMAND (⌘) or SHIFT to open");
-        System.out.println("====================================================");
+        System.out.println("==========================================================");
+        System.out.println("✨ M.I.R.A. Ready — Clean Build Loaded");
+        System.out.println("👉 Select ANY file in Finder/Desktop and press COMMAND + E");
+        System.out.println("==========================================================");
     }
 
-    private void toggleMode() {
-        isToolsMode = !isToolsMode;
-        updateSlicesForFile(draggedFile);
-        drawRadialMenu();
-    }
-
-    private void updateSlicesForFile(File file) {
-        if (isToolsMode) {
-            currentSlices = Arrays.asList("COMPRESS", "METADATA", "EDIT", "ANNOTATE", "ADD BG", "CROP", "REDACT");
-            return;
-        }
-        if (file != null) {
-            String name = file.getName().toLowerCase();
-            if (name.endsWith(".pdf")) {
-                currentSlices = Arrays.asList("DOCX", "JPG", "PNG", "TXT");
-            } else {
-                currentSlices = Arrays.asList("PNG", "WEBP", "HEIC", "TIFF", "AVIF", "BMP", "PDF", "DOCX");
+    private boolean detectOsDarkMode() {
+        try {
+            if (IS_MAC) {
+                Process p = new ProcessBuilder("defaults", "read", "-g", "AppleInterfaceStyle").start();
+                try (BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+                    String out = r.readLine();
+                    return out != null && out.trim().equalsIgnoreCase("Dark");
+                }
             }
+        } catch (Exception ignored) {
         }
+        return true;
     }
 
     // =========================================================
-    // 1. FULL CENTERED RADIAL WHEEL (No Clipping!)
+    // 1. FILE-TYPE OPTIONS
+    // =========================================================
+    private void updateSlicesForFile(File file) {
+        if (file == null) {
+            currentSlices = Arrays.asList("PNG", "JPG", "PDF", "TXT", "CSV", "JSON");
+            return;
+        }
+
+        String name = file.getName().toLowerCase();
+        String ext = name.contains(".") ? name.substring(name.lastIndexOf('.') + 1) : "";
+
+        // EXCEL & CSV (.xlsx, .xls, .csv, .tsv)
+        if (Arrays.asList("xlsx", "xls", "csv", "tsv").contains(ext)) {
+            if (isToolsMode) {
+                currentSlices = Arrays.asList("SORT A-Z", "DEDUPE", "SUMMARY");
+            } else {
+                List<String> opts = IS_MAC
+                        ? Arrays.asList("JSON", "CSV", "HTML", "PDF", "TXT", "NUMBERS")
+                        : Arrays.asList("JSON", "CSV", "HTML", "PDF", "TXT");
+                currentSlices = opts.stream().filter(s -> !s.equalsIgnoreCase(ext)).toList();
+            }
+            return;
+        }
+
+        // POWERPOINT (.pptx, .ppt)
+        if (Arrays.asList("pptx", "ppt").contains(ext)) {
+            if (isToolsMode) {
+                currentSlices = Arrays.asList("EXTRACT TXT", "SLIDE 1 PNG");
+            } else {
+                currentSlices = IS_MAC
+                        ? Arrays.asList("PDF", "PNG", "TXT", "HTML", "KEYNOTE")
+                        : Arrays.asList("PDF", "PNG", "TXT", "HTML");
+            }
+            return;
+        }
+
+        // WORD, TEXT & WEB ARCHIVES (.docx, .doc, .rtf, .txt, .md, .html, .mhtml)
+        if (Arrays.asList("docx", "doc", "rtf", "txt", "md", "html", "htm", "mhtml").contains(ext)) {
+            if (isToolsMode) {
+                currentSlices = Arrays.asList("SUMMARY", "UPPERCASE", "CLEAN TXT");
+            } else {
+                List<String> opts = IS_MAC
+                        ? Arrays.asList("PDF", "TXT", "HTML", "RTF", "DOCX", "PAGES")
+                        : Arrays.asList("PDF", "TXT", "HTML", "RTF", "DOCX");
+                currentSlices = opts.stream().filter(s -> !s.equalsIgnoreCase(ext)).toList();
+            }
+            return;
+        }
+
+        // PDF DOCUMENTS (.pdf)
+        if (ext.equals("pdf")) {
+            if (isToolsMode) {
+                currentSlices = Arrays.asList("SUMMARY", "ALL PAGES PNG");
+            } else {
+                currentSlices = IS_MAC
+                        ? Arrays.asList("JPG", "PNG", "TXT", "HTML", "DOCX", "PAGES")
+                        : Arrays.asList("JPG", "PNG", "TXT", "HTML", "DOCX");
+            }
+            return;
+        }
+
+        // IMAGES (.jpg, .jpeg, .png, .heic, .webp, .bmp, .tiff)
+        if (Arrays.asList("jpg", "jpeg", "png", "heic", "webp", "bmp", "tiff").contains(ext)) {
+            if (isToolsMode) {
+                currentSlices = Arrays.asList("ADD BG", "CROP", "COMPRESS", "GRAYSCALE");
+            } else {
+                List<String> allImg = IS_MAC
+                        ? Arrays.asList("JPG", "PNG", "HEIC", "WEBP", "TIFF", "PDF")
+                        : Arrays.asList("JPG", "PNG", "WEBP", "TIFF", "BMP", "PDF");
+                String filterExt = ext.equals("jpeg") ? "JPG" : ext.toUpperCase();
+                currentSlices = allImg.stream().filter(s -> !s.equals(filterExt)).toList();
+            }
+            return;
+        }
+
+        // JSON FILES (.json)
+        if (ext.equals("json")) {
+            currentSlices = Arrays.asList("CSV", "HTML", "PDF", "TXT");
+            return;
+        }
+
+        currentSlices = Arrays.asList("PDF", "TXT", "HTML");
+    }
+
+    // =========================================================
+    // 2. RADIAL WHEEL RENDERER
     // =========================================================
     private void drawRadialMenu() {
         wheelPane.getChildren().clear();
@@ -145,22 +235,35 @@ public class RadialConverterApp extends Application {
         int count = currentSlices.size();
         double step = 360.0 / count;
 
-        // Outer subtle glass rim
-        Circle outerRim = new Circle(cx, cy, OUTER_R + 6);
-        outerRim.setFill(Color.rgb(255, 235, 215, 0.35));
-        outerRim.setStroke(Color.rgb(255, 255, 255, 0.6));
+        LinearGradient sliceBase = isOsDarkMode
+                ? new LinearGradient(0, 0, 0, 1, true, CycleMethod.NO_CYCLE,
+                        new Stop(0, Color.rgb(22, 27, 38, 0.90)),
+                        new Stop(1, Color.rgb(13, 17, 24, 0.94)))
+                : new LinearGradient(0, 0, 0, 1, true, CycleMethod.NO_CYCLE,
+                        new Stop(0, Color.rgb(244, 247, 252, 0.94)),
+                        new Stop(1, Color.rgb(225, 232, 242, 0.96)));
+
+        LinearGradient sliceHover = new LinearGradient(0, 0, 1, 1, true, CycleMethod.NO_CYCLE,
+                new Stop(0, Color.rgb(37, 99, 235, 0.96)),
+                new Stop(1, Color.rgb(79, 70, 229, 0.96)));
+
+        Color borderColor = isOsDarkMode ? Color.rgb(255, 255, 255, 0.28) : Color.rgb(30, 41, 59, 0.25);
+        Color baseTextColor = isOsDarkMode ? Color.rgb(248, 250, 252) : Color.rgb(15, 23, 42);
+
+        Circle outerRim = new Circle(cx, cy, OUTER_R + 5);
+        outerRim.setFill(isOsDarkMode ? Color.rgb(10, 12, 18, 0.55) : Color.rgb(255, 255, 255, 0.55));
+        outerRim.setStroke(isOsDarkMode ? Color.rgb(255, 255, 255, 0.45) : Color.rgb(15, 23, 42, 0.35));
         outerRim.setStrokeWidth(1.5);
         wheelPane.getChildren().add(outerRim);
 
         for (int i = 0; i < count; i++) {
-            // Center top slice at 12 o'clock (90 + step/2)
             double startAngle = 90 + (step / 2.0) - (i * step);
             Path slice = createDonutSlice(cx, cy, INNER_R, OUTER_R, startAngle, -step);
 
             boolean isHovered = (i == hoveredIndex);
-            slice.setFill(isHovered ? SLICE_HOVER : SLICE_BASE);
-            slice.setStroke(STROKE_COLOR);
-            slice.setStrokeWidth(IS_MAC ? 2.0 : 1.2);
+            slice.setFill(isHovered ? sliceHover : sliceBase);
+            slice.setStroke(isHovered ? Color.rgb(147, 197, 253, 0.95) : borderColor);
+            slice.setStrokeWidth(isHovered ? 1.8 : 1.1);
 
             double midRad = Math.toRadians(startAngle - (step / 2.0));
             double textR = (INNER_R + OUTER_R) / 2.0;
@@ -168,8 +271,8 @@ public class RadialConverterApp extends Application {
             double ty = cy - textR * Math.sin(midRad);
 
             Text label = new Text(currentSlices.get(i));
-            label.setFont(Font.font(OS_FONT, FontWeight.BOLD, count > 5 ? 10 : 12));
-            label.setFill(isHovered ? TEXT_HOVER : TEXT_BASE);
+            label.setFont(Font.font(OS_FONT, FontWeight.BOLD, count > 6 ? 10 : 11.5));
+            label.setFill(isHovered ? Color.WHITE : baseTextColor);
             label.setMouseTransparent(true);
             label.setX(tx - label.getLayoutBounds().getWidth() / 2);
             label.setY(ty + 4);
@@ -177,25 +280,37 @@ public class RadialConverterApp extends Application {
             wheelPane.getChildren().addAll(slice, label);
         }
 
-        // Hollow/Translucent Center Ring so your dragged file sits inside the circle!
         Circle hub = new Circle(cx, cy, INNER_R - 2);
         hub.setFill(centerHovered
-                ? Color.rgb(235, 87, 52, 0.45)
-                : Color.rgb(255, 255, 255, 0.25));
-        hub.setStroke(STROKE_COLOR);
-        hub.setStrokeWidth(2.0);
+                ? sliceHover
+                : (isOsDarkMode ? Color.rgb(15, 23, 42, 0.96) : Color.rgb(255, 255, 255, 0.96)));
+        hub.setStroke(Color.rgb(59, 130, 246, 0.85));
+        hub.setStrokeWidth(1.8);
 
-        String centerLabelText = draggedFile != null
-                ? (isToolsMode ? "TOOLS" : "CONVERT")
-                : "DROP FILE";
-        Text hubText = new Text(centerLabelText);
-        hubText.setFont(Font.font(OS_FONT, FontWeight.BOLD, 10));
-        hubText.setFill(TEXT_BASE);
-        hubText.setMouseTransparent(true);
-        hubText.setX(cx - hubText.getLayoutBounds().getWidth() / 2);
-        hubText.setY(cy + 4);
+        String extBadge = "PICK FILE";
+        if (activeFile != null) {
+            String n = activeFile.getName();
+            extBadge = n.contains(".") ? n.substring(n.lastIndexOf('.') + 1).toUpperCase() : "FILE";
+        }
 
-        wheelPane.getChildren().addAll(hub, hubText);
+        String topLine = centerHovered ? (isToolsMode ? "CONVERT" : "TOOLS") : "[" + extBadge + "]";
+        String botLine = activeFile == null ? "Click Here" : (centerHovered ? "Switch" : "Click:Tools");
+
+        Text hubTitle = new Text(topLine);
+        hubTitle.setFont(Font.font(OS_FONT, FontWeight.EXTRA_BOLD, 10.0));
+        hubTitle.setFill(centerHovered ? Color.WHITE : Color.rgb(96, 165, 250));
+        hubTitle.setMouseTransparent(true);
+        hubTitle.setX(cx - hubTitle.getLayoutBounds().getWidth() / 2);
+        hubTitle.setY(cy - 2);
+
+        Text hubSub = new Text(botLine);
+        hubSub.setFont(Font.font(OS_FONT, FontWeight.SEMI_BOLD, 8.5));
+        hubSub.setFill(centerHovered ? Color.WHITE : baseTextColor);
+        hubSub.setMouseTransparent(true);
+        hubSub.setX(cx - hubSub.getLayoutBounds().getWidth() / 2);
+        hubSub.setY(cy + 10);
+
+        wheelPane.getChildren().addAll(hub, hubTitle, hubSub);
     }
 
     private Path createDonutSlice(double cx, double cy, double rIn, double rOut, double startDeg, double sweepDeg) {
@@ -212,26 +327,94 @@ public class RadialConverterApp extends Application {
     }
 
     // =========================================================
-    // 2. DRAG & DROP + MOUSE HOVER HANDLERS
+    // 3. INTERACTIONS
     // =========================================================
-    private void updateHoverPosition(double mouseX, double mouseY) {
+    private void setupInteractions(Scene scene) {
+        scene.setCursor(Cursor.HAND);
+        scene.setOnMouseMoved(e -> updateHoverState(e.getX(), e.getY()));
+
+        scene.setOnMouseClicked(e -> {
+            double dx = e.getX() - (SIZE / 2.0);
+            double dy = e.getY() - (SIZE / 2.0);
+            double dist = Math.hypot(dx, dy);
+
+            if (dist < INNER_R) {
+                if (activeFile == null) {
+                    FileChooser fc = new FileChooser();
+                    fc.setTitle("Select File for M.I.R.A.");
+                    File chosen = fc.showOpenDialog(radialStage);
+                    if (chosen != null) {
+                        activeFile = chosen;
+                        updateSlicesForFile(activeFile);
+                        drawRadialMenu();
+                    }
+                } else {
+                    isToolsMode = !isToolsMode;
+                    updateSlicesForFile(activeFile);
+                    drawRadialMenu();
+                }
+            } else if (dist <= OUTER_R && hoveredIndex >= 0 && hoveredIndex < currentSlices.size()) {
+                String action = currentSlices.get(hoveredIndex);
+                File target = activeFile;
+                hoveredIndex = -1;
+                isToolsMode = false;
+                radialStage.hide();
+
+                if (target != null) {
+                    if (action.equals("ADD BG") || action.equals("CROP")) {
+                        Platform.runLater(() -> {
+                            if (action.equals("ADD BG")) showAddBgModal(target);
+                            else showCropModal(target);
+                        });
+                    } else {
+                        CompletableFuture.runAsync(() -> executeFileAction(target, action));
+                    }
+                }
+            } else {
+                radialStage.hide();
+            }
+        });
+
+        scene.setOnKeyPressed(e -> {
+            if (e.getCode() == KeyCode.ESCAPE) radialStage.hide();
+        });
+
+        scene.setOnDragOver(e -> {
+            if (e.getDragboard().hasFiles()) {
+                e.acceptTransferModes(TransferMode.COPY);
+                updateHoverState(e.getX(), e.getY());
+            }
+        });
+
+        scene.setOnDragDropped(e -> {
+            if (e.getDragboard().hasFiles()) {
+                activeFile = e.getDragboard().getFiles().get(0);
+                if (hoveredIndex >= 0 && hoveredIndex < currentSlices.size()) {
+                    String action = currentSlices.get(hoveredIndex);
+                    File target = activeFile;
+                    radialStage.hide();
+                    CompletableFuture.runAsync(() -> executeFileAction(target, action));
+                }
+            }
+            e.setDropCompleted(true);
+        });
+    }
+
+    private void updateHoverState(double mouseX, double mouseY) {
         double dx = mouseX - (SIZE / 2.0);
         double dy = mouseY - (SIZE / 2.0);
         double dist = Math.hypot(dx, dy);
 
         if (dist < INNER_R) {
-            hoveredIndex = -1;
-            if (!centerHovered) {
+            if (!centerHovered || hoveredIndex != -1) {
                 centerHovered = true;
-                modeSwitchTimer.playFromStart();
+                hoveredIndex = -1;
                 drawRadialMenu();
             }
         } else if (dist <= OUTER_R) {
             centerHovered = false;
-            modeSwitchTimer.stop();
             int count = currentSlices.size();
             double step = 360.0 / count;
-            // Match top-centered slice angle
             double angle = (Math.toDegrees(Math.atan2(dy, dx)) + 90 + (step / 2.0) + 360) % 360;
             int newHover = (int) (angle / step) % count;
             if (newHover != hoveredIndex) {
@@ -239,111 +422,335 @@ public class RadialConverterApp extends Application {
                 drawRadialMenu();
             }
         } else {
-            hoveredIndex = -1;
-            centerHovered = false;
-            modeSwitchTimer.stop();
-            drawRadialMenu();
+            if (hoveredIndex != -1 || centerHovered) {
+                hoveredIndex = -1;
+                centerHovered = false;
+                drawRadialMenu();
+            }
         }
     }
 
-    private void setupDragAndDrop(Scene scene) {
-        scene.setOnDragEntered(e -> {
-            if (e.getDragboard().hasFiles()) {
-                draggedFile = e.getDragboard().getFiles().get(0);
-                updateSlicesForFile(draggedFile);
-                drawRadialMenu();
-                e.acceptTransferModes(TransferMode.COPY);
+    // =========================================================
+    // 4. RESTORED MULTI-LINE FINDER APPLESCRIPT (The One That Worked!)
+    // =========================================================
+    private File getCurrentlySelectedFileFromOS() {
+        try {
+            if (IS_MAC) {
+                String[] cmd = {
+                        "osascript",
+                        "-e", "tell application \"Finder\"",
+                        "-e", "set sel to selection",
+                        "-e", "if (count of sel) > 0 then",
+                        "-e", "return POSIX path of ((item 1 of sel) as text)",
+                        "-e", "end if",
+                        "-e", "end tell"
+                };
+                Process p = new ProcessBuilder(cmd).start();
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+                    String path = reader.readLine();
+                    if (path != null && !path.isBlank()) {
+                        File f = new File(path.trim());
+                        if (f.exists()) {
+                            System.out.println("🎯 M.I.R.A. Locked onto File: " + f.getAbsolutePath());
+                            return f;
+                        }
+                    }
+                }
+            } else {
+                String psCommand = "$shell = New-Object -ComObject Shell.Application; " +
+                        "foreach ($w in $shell.Windows()) { " +
+                        "if ($w.Document.SelectedItems().Count -gt 0) { " +
+                        "$w.Document.SelectedItems().Item(0).Path; break } }";
+                Process p = new ProcessBuilder("powershell", "-NoProfile", "-Command", psCommand).start();
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+                    String path = reader.readLine();
+                    if (path != null && !path.isBlank()) {
+                        File f = new File(path.trim());
+                        if (f.exists()) return f;
+                    }
+                }
             }
-        });
-
-        scene.setOnDragOver(e -> {
-            if (e.getDragboard().hasFiles()) {
-                e.acceptTransferModes(TransferMode.COPY);
-                updateHoverPosition(e.getX(), e.getY());
-            }
-        });
-
-        // Also allow normal mouse movement hover if summoned via Command click
-        scene.setOnMouseMoved(e -> updateHoverPosition(e.getX(), e.getY()));
-
-        scene.setOnDragExited(e -> {
-            hoveredIndex = -1;
-            centerHovered = false;
-            modeSwitchTimer.stop();
-            radialStage.hide();
-        });
-
-        scene.setOnDragDropped(e -> {
-            int chosenIndex = hoveredIndex;
-            File fileToProcess = draggedFile;
-            hoveredIndex = -1;
-            centerHovered = false;
-            isToolsMode = false;
-            radialStage.hide();
-
-            if (fileToProcess != null && chosenIndex >= 0 && chosenIndex < currentSlices.size()) {
-                String action = currentSlices.get(chosenIndex);
-                Platform.runLater(() -> executeFileAction(fileToProcess, action));
-            }
-            e.setDropCompleted(true);
-        });
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return null;
     }
 
     // =========================================================
-    // 3. FILE CONVERSION & PROCESSING ENGINE
+    // 5. UNIVERSAL CONVERSION ENGINE
     // =========================================================
     private void executeFileAction(File file, String action) {
         try {
+            System.out.println("⚙️ Converting '" + file.getName() + "' -> " + action + "...");
             String path = file.getAbsolutePath();
             int dotIndex = path.lastIndexOf('.');
             String baseName = (dotIndex > 0) ? path.substring(0, dotIndex) : path;
             String ext = (dotIndex > 0) ? path.substring(dotIndex + 1).toLowerCase() : "";
+            String targetExt = action.toLowerCase();
+            File outputCreated = null;
 
-            if (action.equals("ADD BG")) {
-                showAddBgModal(file);
-                return;
-            }
-            if (action.equals("CROP")) {
-                showCropModal(file);
-                return;
-            }
-            if (action.equals("COMPRESS")) {
-                BufferedImage src = ImageIO.read(file);
-                if (src != null) {
-                    ImageIO.write(src, "jpg", new File(baseName + " Compressed.jpg"));
+            // A. EXCEL (.xlsx, .xls) & CSV/TSV
+            if (Arrays.asList("xlsx", "xls", "csv", "tsv").contains(ext)) {
+                if (action.equals("NUMBERS") && IS_MAC) {
+                    new ProcessBuilder("open", "-a", "Numbers", path).start();
+                    return;
                 }
-                return;
+                List<List<String>> table = readSpreadsheetToTable(file, ext);
+                if (table.isEmpty()) return;
+
+                if (action.equals("SORT A-Z") && table.size() > 1) {
+                    List<String> header = table.get(0);
+                    List<List<String>> body = table.subList(1, table.size()).stream()
+                            .sorted(Comparator.comparing(r -> r.isEmpty() ? "" : r.get(0)))
+                            .collect(Collectors.toList());
+                    body.add(0, header);
+                    outputCreated = new File(baseName + "_Sorted.csv");
+                    writeTableToCsv(body, outputCreated);
+                } else if (action.equals("DEDUPE")) {
+                    List<List<String>> deduped = new ArrayList<>(new LinkedHashSet<>(table));
+                    outputCreated = new File(baseName + "_Deduped.csv");
+                    writeTableToCsv(deduped, outputCreated);
+                } else if (action.equals("SUMMARY")) {
+                    outputCreated = new File(baseName + "_Summary.txt");
+                    String summary = "File: " + file.getName() + "\nTotal Rows: " + table.size()
+                            + "\nTotal Columns: " + (table.get(0).size())
+                            + "\nHeaders: " + String.join(", ", table.get(0));
+                    Files.writeString(outputCreated.toPath(), summary);
+                } else if (action.equals("CSV")) {
+                    outputCreated = new File(baseName + ".csv");
+                    writeTableToCsv(table, outputCreated);
+                } else if (action.equals("TXT")) {
+                    String txt = table.stream().map(r -> String.join("\t", r)).collect(Collectors.joining("\n"));
+                    outputCreated = new File(baseName + ".txt");
+                    Files.writeString(outputCreated.toPath(), txt);
+                } else if (action.equals("HTML")) {
+                    StringBuilder html = new StringBuilder("<html><head><meta charset='UTF-8'><style>"
+                            + "body{font-family:-apple-system,sans-serif;padding:24px;background:#f8fafc;}"
+                            + "table{border-collapse:collapse;width:100%;background:white;}"
+                            + "th,td{border:1px solid #cbd5e1;padding:8px 12px;text-align:left;font-size:13px;}"
+                            + "th{background:#1e293b;color:white;}</style></head><body><table>\n");
+                    for (int i = 0; i < table.size(); i++) {
+                        html.append("<tr>");
+                        for (String cell : table.get(i)) {
+                            html.append(i == 0 ? "<th>" : "<td>")
+                                    .append(cell.replace("&", "&amp;").replace("<", "&lt;"))
+                                    .append(i == 0 ? "</th>" : "</td>");
+                        }
+                        html.append("</tr>\n");
+                    }
+                    html.append("</table></body></html>");
+                    outputCreated = new File(baseName + ".html");
+                    Files.writeString(outputCreated.toPath(), html.toString());
+                } else if (action.equals("JSON")) {
+                    List<String> headers = table.get(0);
+                    StringBuilder json = new StringBuilder("[\n");
+                    for (int i = 1; i < table.size(); i++) {
+                        List<String> row = table.get(i);
+                        json.append("  {");
+                        int cols = Math.max(headers.size(), row.size());
+                        for (int c = 0; c < cols; c++) {
+                            String key = c < headers.size() && !headers.get(c).isBlank() ? headers.get(c).trim() : "col_" + (c + 1);
+                            String val = c < row.size() ? row.get(c).trim() : "";
+                            json.append("\"").append(escapeJson(key)).append("\": \"").append(escapeJson(val)).append("\"");
+                            if (c < cols - 1) json.append(", ");
+                        }
+                        json.append("}").append(i < table.size() - 1 ? ",\n" : "\n");
+                    }
+                    json.append("]");
+                    outputCreated = new File(baseName + ".json");
+                    Files.writeString(outputCreated.toPath(), json.toString());
+                } else if (action.equals("PDF")) {
+                    String formatted = table.stream().map(r -> String.join("  |  ", r)).collect(Collectors.joining("\n"));
+                    outputCreated = new File(baseName + ".pdf");
+                    createSimplePdfFromText(formatted, outputCreated);
+                }
             }
 
-            // PDF Conversions
-            if (ext.equals("pdf")) {
-                try (PDDocument doc = Loader.loadPDF(file)) {
-                    if (action.equals("TXT") || action.equals("DOCX")) {
-                        String text = new PDFTextStripper().getText(doc);
-                        Files.writeString(new File(baseName + "." + action.toLowerCase()).toPath(), text);
-                    } else {
-                        PDFRenderer renderer = new PDFRenderer(doc);
-                        BufferedImage pageImg = renderer.renderImageWithDPI(0, 200);
-                        String fmt = action.equalsIgnoreCase("JPG") ? "jpg" : "png";
-                        ImageIO.write(pageImg, fmt, new File(baseName + "." + fmt));
+            // B. POWERPOINT (.pptx)
+            else if (Arrays.asList("pptx", "ppt").contains(ext)) {
+                if (action.equals("KEYNOTE") && IS_MAC) {
+                    new ProcessBuilder("open", "-a", "Keynote", path).start();
+                    return;
+                }
+                try (FileInputStream fis = new FileInputStream(file);
+                     XMLSlideShow ppt = new XMLSlideShow(fis)) {
+                    Dimension pgsize = ppt.getPageSize();
+                    List<XSLFSlide> slides = ppt.getSlides();
+
+                    if (action.equals("TXT") || action.equals("EXTRACT TXT") || action.equals("HTML")) {
+                        StringBuilder sb = new StringBuilder();
+                        int sNum = 1;
+                        for (XSLFSlide slide : slides) {
+                            sb.append("--- Slide ").append(sNum++).append(" ---\n");
+                            for (XSLFShape shape : slide.getShapes()) {
+                                if (shape instanceof XSLFTextShape ts) {
+                                    sb.append(ts.getText()).append("\n");
+                                }
+                            }
+                            sb.append("\n");
+                        }
+                        String outExt = action.equals("HTML") ? "html" : "txt";
+                        outputCreated = new File(baseName + "." + outExt);
+                        Files.writeString(outputCreated.toPath(), sb.toString());
+                    } else if (action.equals("PNG") || action.equals("SLIDE 1 PNG")) {
+                        if (!slides.isEmpty()) {
+                            BufferedImage img = renderSlide(slides.get(0), pgsize);
+                            outputCreated = new File(baseName + "_Slide1.png");
+                            ImageIO.write(img, "png", outputCreated);
+                        }
+                    } else if (action.equals("PDF")) {
+                        outputCreated = new File(baseName + ".pdf");
+                        try (PDDocument pdfDoc = new PDDocument()) {
+                            for (XSLFSlide slide : slides) {
+                                BufferedImage img = renderSlide(slide, pgsize);
+                                PDPage page = new PDPage(new org.apache.pdfbox.pdmodel.common.PDRectangle(pgsize.width, pgsize.height));
+                                pdfDoc.addPage(page);
+                                PDImageXObject pdImg = LosslessFactoryBridge.fromBufferedImage(pdfDoc, img);
+                                try (PDPageContentStream cs = new PDPageContentStream(pdfDoc, page)) {
+                                    cs.drawImage(pdImg, 0, 0, pgsize.width, pgsize.height);
+                                }
+                            }
+                            pdfDoc.save(outputCreated);
+                        }
                     }
                 }
-                return;
             }
 
-            // Image Conversions
-            BufferedImage img = ImageIO.read(file);
-            if (img != null) {
-                String fmt = action.toLowerCase();
-                if (fmt.equals("jpg") || fmt.equals("bmp")) {
-                    BufferedImage rgb = new BufferedImage(img.getWidth(), img.getHeight(), BufferedImage.TYPE_INT_RGB);
-                    Graphics2D g = rgb.createGraphics();
-                    g.drawImage(img, 0, 0, java.awt.Color.WHITE, null);
-                    g.dispose();
-                    img = rgb;
+            // C. WORD DOCS, HTML & MHTML (.docx, .doc, .rtf, .txt, .md, .html, .mhtml)
+            else if (Arrays.asList("docx", "doc", "rtf", "txt", "md", "html", "htm", "mhtml").contains(ext)) {
+                if (action.equals("PAGES") && IS_MAC) {
+                    new ProcessBuilder("open", "-a", "Pages", path).start();
+                    return;
                 }
-                File out = new File(baseName + "." + fmt);
-                ImageIO.write(img, fmt, out);
+                String extractedText = extractTextFromDocOrWeb(file, ext);
+                if (action.equals("UPPERCASE")) {
+                    outputCreated = new File(baseName + "_UPPER.txt");
+                    Files.writeString(outputCreated.toPath(), extractedText.toUpperCase());
+                } else if (action.equals("CLEAN TXT") || action.equals("TXT")) {
+                    outputCreated = new File(baseName + ".txt");
+                    Files.writeString(outputCreated.toPath(), extractedText.trim());
+                } else if (action.equals("SUMMARY")) {
+                    String[] words = extractedText.trim().split("\\s+");
+                    outputCreated = new File(baseName + "_Summary.txt");
+                    Files.writeString(outputCreated.toPath(), "Words: " + words.length + "\n\n" + extractedText);
+                } else if (action.equals("PDF")) {
+                    outputCreated = new File(baseName + ".pdf");
+                    createSimplePdfFromText(extractedText, outputCreated);
+                } else if (IS_MAC && Arrays.asList("html", "rtf", "docx").contains(targetExt) && !ext.equals("mhtml")) {
+                    outputCreated = new File(baseName + "_Converted." + targetExt);
+                    new ProcessBuilder("textutil", "-convert", targetExt, path, "-output", outputCreated.getAbsolutePath())
+                            .start().waitFor();
+                } else {
+                    outputCreated = new File(baseName + "_Converted." + targetExt);
+                    Files.writeString(outputCreated.toPath(), extractedText);
+                }
+            }
+
+            // D. PDF DOCUMENTS (.pdf)
+            else if (ext.equals("pdf")) {
+                try (PDDocument doc = Loader.loadPDF(file)) {
+                    if (action.equals("TXT") || action.equals("HTML") || action.equals("SUMMARY")) {
+                        String text = new PDFTextStripper().getText(doc);
+                        outputCreated = new File(baseName + (action.equals("HTML") ? ".html" : ".txt"));
+                        Files.writeString(outputCreated.toPath(), text);
+                    } else if (action.equals("DOCX")) {
+                        String text = new PDFTextStripper().getText(doc);
+                        File tmpTxt = File.createTempFile("mira_pdf", ".txt");
+                        Files.writeString(tmpTxt.toPath(), text);
+                        outputCreated = new File(baseName + ".docx");
+                        if (IS_MAC) {
+                            new ProcessBuilder("textutil", "-convert", "docx", tmpTxt.getAbsolutePath(),
+                                    "-output", outputCreated.getAbsolutePath()).start().waitFor();
+                        } else {
+                            Files.writeString(outputCreated.toPath(), text);
+                        }
+                        tmpTxt.delete();
+                    } else if (action.equals("PAGES") && IS_MAC) {
+                        outputCreated = new File(baseName + ".txt");
+                        Files.writeString(outputCreated.toPath(), new PDFTextStripper().getText(doc));
+                        new ProcessBuilder("open", "-a", "Pages", outputCreated.getAbsolutePath()).start();
+                    } else {
+                        PDFRenderer renderer = new PDFRenderer(doc);
+                        int pagesToRender = action.equals("ALL PAGES PNG") ? doc.getNumberOfPages() : 1;
+                        String fmt = action.equalsIgnoreCase("JPG") ? "jpg" : "png";
+                        for (int p = 0; p < pagesToRender; p++) {
+                            BufferedImage pageImg = renderer.renderImageWithDPI(p, 200);
+                            if (fmt.equals("jpg")) {
+                                BufferedImage rgb = new BufferedImage(pageImg.getWidth(), pageImg.getHeight(), BufferedImage.TYPE_INT_RGB);
+                                Graphics2D g = rgb.createGraphics();
+                                g.drawImage(pageImg, 0, 0, java.awt.Color.WHITE, null);
+                                g.dispose();
+                                pageImg = rgb;
+                            }
+                            outputCreated = new File(baseName + "_Page" + (p + 1) + "." + fmt);
+                            ImageIO.write(pageImg, fmt, outputCreated);
+                        }
+                    }
+                }
+            }
+
+            // E. JSON FILES (.json)
+            else if (ext.equals("json")) {
+                String rawJson = Files.readString(file.toPath());
+                if (action.equals("TXT") || action.equals("HTML") || action.equals("CSV")) {
+                    outputCreated = new File(baseName + "." + targetExt);
+                    Files.writeString(outputCreated.toPath(), rawJson);
+                } else if (action.equals("PDF")) {
+                    outputCreated = new File(baseName + ".pdf");
+                    createSimplePdfFromText(rawJson, outputCreated);
+                }
+            }
+
+            // F. IMAGES (.jpg, .jpeg, .png, .heic, .webp, .bmp, .tiff)
+            else if (Arrays.asList("jpg", "jpeg", "png", "heic", "webp", "bmp", "tiff").contains(ext)) {
+                if (action.equals("PDF")) {
+                    BufferedImage img = ImageIO.read(file);
+                    if (img != null) {
+                        outputCreated = new File(baseName + ".pdf");
+                        try (PDDocument doc = new PDDocument()) {
+                            PDPage page = new PDPage();
+                            doc.addPage(page);
+                            PDImageXObject pdImage = LosslessFactoryBridge.fromBufferedImage(doc, img);
+                            try (PDPageContentStream cs = new PDPageContentStream(doc, page)) {
+                                float scale = Math.min(500f / img.getWidth(), 700f / img.getHeight());
+                                cs.drawImage(pdImage, 50, 100, img.getWidth() * scale, img.getHeight() * scale);
+                            }
+                            doc.save(outputCreated);
+                        }
+                    }
+                } else if (action.equals("COMPRESS") && IS_MAC) {
+                    outputCreated = new File(baseName + "_Compressed.jpg");
+                    new ProcessBuilder("sips", "-s", "format", "jpeg", "-s", "formatOptions", "50",
+                            path, "--out", outputCreated.getAbsolutePath()).start().waitFor();
+                } else if (action.equals("GRAYSCALE")) {
+                    BufferedImage src = ImageIO.read(file);
+                    if (src != null) {
+                        BufferedImage bw = new BufferedImage(src.getWidth(), src.getHeight(), BufferedImage.TYPE_BYTE_GRAY);
+                        Graphics2D g = bw.createGraphics();
+                        g.drawImage(src, 0, 0, null);
+                        g.dispose();
+                        outputCreated = new File(baseName + "_BW.png");
+                        ImageIO.write(bw, "png", outputCreated);
+                    }
+                } else if (IS_MAC && Arrays.asList("jpg", "png", "heic", "tiff", "bmp").contains(targetExt)) {
+                    String sipsFmt = targetExt.equals("jpg") ? "jpeg" : targetExt;
+                    outputCreated = new File(baseName + "_Converted." + targetExt);
+                    new ProcessBuilder("sips", "-s", "format", sipsFmt, path, "--out", outputCreated.getAbsolutePath())
+                            .start().waitFor();
+                } else {
+                    BufferedImage img = ImageIO.read(file);
+                    if (img != null) {
+                        outputCreated = new File(baseName + "_Converted." + targetExt);
+                        ImageIO.write(img, targetExt, outputCreated);
+                    }
+                }
+            }
+
+            if (outputCreated != null && outputCreated.exists()) {
+                System.out.println("✅ SUCCESS! Created: " + outputCreated.getAbsolutePath());
+                if (IS_MAC) {
+                    new ProcessBuilder("afplay", "/System/Library/Sounds/Glass.aiff").start();
+                }
             }
         } catch (Exception ex) {
             ex.printStackTrace();
@@ -351,69 +758,141 @@ public class RadialConverterApp extends Application {
     }
 
     // =========================================================
-    // 4. CROP & ADD BG MODALS (Matching Video 00:06 & 00:14)
+    // 6. PARSERS & HELPERS
     // =========================================================
+    private List<List<String>> readSpreadsheetToTable(File file, String ext) throws Exception {
+        List<List<String>> rows = new ArrayList<>();
+        if (ext.equals("csv") || ext.equals("tsv")) {
+            String sep = ext.equals("tsv") ? "\t" : ",";
+            for (String line : Files.readAllLines(file.toPath())) {
+                rows.add(Arrays.stream(line.split(sep, -1)).map(String::trim).collect(Collectors.toList()));
+            }
+        } else {
+            try (Workbook wb = WorkbookFactory.create(file)) {
+                Sheet sheet = wb.getSheetAt(0);
+                DataFormatter formatter = new DataFormatter();
+                for (Row row : sheet) {
+                    List<String> cells = new ArrayList<>();
+                    int lastCol = Math.max(row.getLastCellNum(), 0);
+                    for (int c = 0; c < lastCol; c++) {
+                        org.apache.poi.ss.usermodel.Cell cell = row.getCell(c, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK);
+                        cells.add(formatter.formatCellValue(cell).trim());
+                    }
+                    if (!cells.isEmpty()) rows.add(cells);
+                }
+            }
+        }
+        return rows;
+    }
+
+    private void writeTableToCsv(List<List<String>> table, File outCsv) throws Exception {
+        StringBuilder sb = new StringBuilder();
+        for (List<String> row : table) {
+            sb.append(row.stream()
+                    .map(c -> c.contains(",") || c.contains("\"") ? "\"" + c.replace("\"", "\"\"") + "\"" : c)
+                    .collect(Collectors.joining(","))).append("\n");
+        }
+        Files.writeString(outCsv.toPath(), sb.toString());
+    }
+
+    private String extractTextFromDocOrWeb(File file, String ext) throws Exception {
+        if (ext.equals("docx")) {
+            try (FileInputStream fis = new FileInputStream(file);
+                 XWPFDocument doc = new XWPFDocument(fis)) {
+                return doc.getParagraphs().stream().map(XWPFParagraph::getText).collect(Collectors.joining("\n"));
+            }
+        }
+        String raw = Files.readString(file.toPath());
+        if (ext.equals("mhtml") || ext.equals("html") || ext.equals("htm")) {
+            raw = raw.replace("=\r\n", "").replace("=\n", "").replace("=3D", "=");
+            raw = raw.replaceAll("(?s)<(script|style)[^>]*>.*?</\\1>", "");
+            raw = raw.replaceAll("<[^>]+>", " ");
+        }
+        return raw;
+    }
+
+    private BufferedImage renderSlide(XSLFSlide slide, Dimension pgsize) {
+        BufferedImage img = new BufferedImage(pgsize.width, pgsize.height, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g2 = img.createGraphics();
+        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g2.setPaint(java.awt.Color.WHITE);
+        g2.fill(new Double(0, 0, pgsize.width, pgsize.height));
+        slide.draw(g2);
+        g2.dispose();
+        return img;
+    }
+
+    private String escapeJson(String s) {
+        return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ").replace("\r", "");
+    }
+
+    private static class LosslessFactoryBridge {
+        static PDImageXObject fromBufferedImage(PDDocument doc, BufferedImage img) throws Exception {
+            File tmp = File.createTempFile("mira_img", ".png");
+            ImageIO.write(img, "png", tmp);
+            PDImageXObject obj = PDImageXObject.createFromFileByContent(tmp, doc);
+            tmp.delete();
+            return obj;
+        }
+    }
+
+    private void createSimplePdfFromText(String text, File outPdf) throws Exception {
+        try (PDDocument doc = new PDDocument()) {
+            String[] lines = text.split("\\r?\\n");
+            int lineIdx = 0;
+            while (lineIdx < lines.length) {
+                PDPage page = new PDPage();
+                doc.addPage(page);
+                try (PDPageContentStream cs = new PDPageContentStream(doc, page)) {
+                    cs.beginText();
+                    cs.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 10);
+                    cs.setLeading(14f);
+                    cs.newLineAtOffset(45, 740);
+                    for (int row = 0; row < 48 && lineIdx < lines.length; row++, lineIdx++) {
+                        String clean = lines[lineIdx].replaceAll("[^\\x20-\\x7E]", " ");
+                        if (clean.length() > 88) clean = clean.substring(0, 88);
+                        cs.showText(clean);
+                        cs.newLine();
+                    }
+                    cs.endText();
+                }
+            }
+            doc.save(outPdf);
+        }
+    }
+
     private void showCropModal(File file) {
         try {
             BufferedImage orig = ImageIO.read(file);
             if (orig == null) return;
-
             Stage modal = new Stage();
-            modal.setTitle("Crop Image");
-
+            modal.setTitle("M.I.R.A. — Crop Image");
             VBox root = new VBox(14);
             root.setAlignment(Pos.CENTER);
-            root.setStyle("-fx-background-color: #F6EFEA; -fx-padding: 20;");
-
+            root.setStyle("-fx-background-color: #18181B; -fx-padding: 20;");
             ImageView preview = new ImageView(SwingFXUtils.toFXImage(orig, null));
-            preview.setFitWidth(380);
-            preview.setFitHeight(320);
+            preview.setFitWidth(360);
+            preview.setFitHeight(280);
             preview.setPreserveRatio(true);
 
-            HBox ratioBar = new HBox(8);
-            ratioBar.setAlignment(Pos.CENTER);
-            Label rLbl = new Label("Aspect Ratio:");
-            rLbl.setStyle("-fx-text-fill: #555; -fx-font-weight: bold;");
-            ratioBar.getChildren().add(rLbl);
-
-            final double[] selectedRatio = {0.0}; // 0 = Free/Square, 1 = 1:1, 1.33 = 4:3, 1.77 = 16:9
-            String[] ratios = {"Free", "1:1", "4:3", "16:9", "3:2"};
-            for (String r : ratios) {
-                Button b = new Button(r);
-                b.setStyle("-fx-background-color: #E8DDD5; -fx-text-fill: #333; -fx-background-radius: 6;");
-                b.setOnAction(e -> {
-                    if (r.equals("1:1")) selectedRatio[0] = 1.0;
-                    else if (r.equals("4:3")) selectedRatio[0] = 4.0 / 3.0;
-                    else if (r.equals("16:9")) selectedRatio[0] = 16.0 / 9.0;
-                    else if (r.equals("3:2")) selectedRatio[0] = 3.0 / 2.0;
-                    else selectedRatio[0] = 0.8;
-                });
-                ratioBar.getChildren().add(b);
-            }
-
-            Button applyBtn = new Button("Apply");
-            applyBtn.setStyle("-fx-background-color: #EB5734; -fx-text-fill: white; -fx-background-radius: 8; -fx-padding: 8 24; -fx-font-weight: bold;");
+            Button applyBtn = new Button("Apply Square Crop");
+            applyBtn.setStyle("-fx-background-color: #3B82F6; -fx-text-fill: white; -fx-background-radius: 8; -fx-padding: 8 24; -fx-font-weight: bold;");
             applyBtn.setOnAction(e -> {
                 try {
-                    int w = orig.getWidth();
-                    int h = orig.getHeight();
-                    int cropW = (int) (w * 0.85);
-                    int cropH = selectedRatio[0] > 0 ? (int) Math.min(h, cropW / selectedRatio[0]) : (int) (h * 0.75);
-                    int x = (w - cropW) / 2;
-                    int y = (h - cropH) / 2;
-                    BufferedImage cropped = orig.getSubimage(x, y, cropW, cropH);
-
+                    int w = orig.getWidth(), h = orig.getHeight();
+                    int m = (int) (Math.min(w, h) * 0.85);
+                    BufferedImage cropped = orig.getSubimage((w - m) / 2, (h - m) / 2, m, m);
                     String path = file.getAbsolutePath();
-                    String baseName = path.substring(0, path.lastIndexOf('.'));
-                    ImageIO.write(cropped, "jpg", new File(baseName + " Cropped.jpg"));
+                    File out = new File(path.substring(0, path.lastIndexOf('.')) + "_Cropped.png");
+                    ImageIO.write(cropped, "png", out);
+                    System.out.println("✅ SUCCESS! Created: " + out.getAbsolutePath());
                     modal.close();
                 } catch (Exception ex) {
                     ex.printStackTrace();
                 }
             });
-
-            root.getChildren().addAll(preview, ratioBar, applyBtn);
-            modal.setScene(new Scene(root, 460, 460));
+            root.getChildren().addAll(preview, applyBtn);
+            modal.setScene(new Scene(root, 420, 380));
             modal.show();
         } catch (Exception e) {
             e.printStackTrace();
@@ -424,82 +903,57 @@ public class RadialConverterApp extends Application {
         try {
             BufferedImage orig = ImageIO.read(file);
             if (orig == null) return;
-
             Stage modal = new Stage();
-            modal.setTitle("Add BG");
-
+            modal.setTitle("M.I.R.A. — Add Background");
             VBox root = new VBox(12);
             root.setAlignment(Pos.CENTER);
-            root.setStyle("-fx-background-color: #F6EFEA; -fx-padding: 20;");
-
+            root.setStyle("-fx-background-color: #18181B; -fx-padding: 20;");
             ImageView previewView = new ImageView();
-            previewView.setFitWidth(420);
-            previewView.setFitHeight(270);
+            previewView.setFitWidth(380);
+            previewView.setFitHeight(250);
             previewView.setPreserveRatio(true);
 
-            Slider padSlider = new Slider(20, 200, 90);
-            Slider cornerSlider = new Slider(0, 80, 28);
-            ComboBox<String> themeBox = new ComboBox<>();
-            themeBox.getItems().addAll("Warm Sunset", "Purple Dream", "Ocean Breeze", "Dark Slate");
-            themeBox.getSelectionModel().selectFirst();
-
+            Slider padSlider = new Slider(20, 180, 80);
+            Slider cornerSlider = new Slider(0, 80, 24);
             final BufferedImage[] latestRender = new BufferedImage[1];
-            Runnable updatePreview = () -> {
-                latestRender[0] = renderStyledBackground(orig, (int) padSlider.getValue(), (int) cornerSlider.getValue(), themeBox.getValue());
+            Runnable update = () -> {
+                latestRender[0] = renderStyledBackground(orig, (int) padSlider.getValue(), (int) cornerSlider.getValue());
                 previewView.setImage(SwingFXUtils.toFXImage(latestRender[0], null));
             };
+            padSlider.valueProperty().addListener((o, a, b) -> update.run());
+            cornerSlider.valueProperty().addListener((o, a, b) -> update.run());
+            update.run();
 
-            padSlider.valueProperty().addListener((o, oldV, newV) -> updatePreview.run());
-            cornerSlider.valueProperty().addListener((o, oldV, newV) -> updatePreview.run());
-            themeBox.setOnAction(e -> updatePreview.run());
-            updatePreview.run();
-
-            Button saveBtn = new Button("Save with Background");
-            saveBtn.setStyle("-fx-background-color: #EB5734; -fx-text-fill: white; -fx-background-radius: 8; -fx-padding: 8 20; -fx-font-weight: bold;");
+            Button saveBtn = new Button("Save Styled Image");
+            saveBtn.setStyle("-fx-background-color: #3B82F6; -fx-text-fill: white; -fx-background-radius: 8; -fx-padding: 8 20; -fx-font-weight: bold;");
             saveBtn.setOnAction(e -> {
                 try {
                     String path = file.getAbsolutePath();
-                    String baseName = path.substring(0, path.lastIndexOf('.'));
-                    ImageIO.write(latestRender[0], "png", new File(baseName + " With Background.png"));
+                    File out = new File(path.substring(0, path.lastIndexOf('.')) + "_Styled.png");
+                    ImageIO.write(latestRender[0], "png", out);
+                    System.out.println("✅ SUCCESS! Created: " + out.getAbsolutePath());
                     modal.close();
                 } catch (Exception ex) {
                     ex.printStackTrace();
                 }
             });
-
-            root.getChildren().addAll(
-                    previewView,
-                    new HBox(10, new Label("Background:"), themeBox),
-                    new HBox(10, new Label("Padding:"), padSlider),
-                    new HBox(10, new Label("Corners:"), cornerSlider),
-                    saveBtn
-            );
-            modal.setScene(new Scene(root, 480, 500));
+            root.getChildren().addAll(previewView, padSlider, cornerSlider, saveBtn);
+            modal.setScene(new Scene(root, 440, 420));
             modal.show();
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
-    private BufferedImage renderStyledBackground(BufferedImage fg, int pad, int radius, String theme) {
-        int w = fg.getWidth();
-        int h = fg.getHeight();
-        int totalW = w + pad * 2;
-        int totalH = h + pad * 2;
-
-        java.awt.Color c1 = new java.awt.Color(255, 110, 80), c2 = new java.awt.Color(255, 180, 120);
-        if ("Purple Dream".equals(theme)) { c1 = new java.awt.Color(155, 89, 182); c2 = new java.awt.Color(108, 92, 231); }
-        else if ("Ocean Breeze".equals(theme)) { c1 = new java.awt.Color(33, 147, 176); c2 = new java.awt.Color(109, 213, 237); }
-        else if ("Dark Slate".equals(theme)) { c1 = new java.awt.Color(35, 37, 38); c2 = new java.awt.Color(65, 67, 69); }
-
+    private BufferedImage renderStyledBackground(BufferedImage fg, int pad, int radius) {
+        int w = fg.getWidth(), h = fg.getHeight();
+        int totalW = w + pad * 2, totalH = h + pad * 2;
         BufferedImage out = new BufferedImage(totalW, totalH, BufferedImage.TYPE_INT_ARGB);
         Graphics2D g2 = out.createGraphics();
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-
-        g2.setPaint(new GradientPaint(0, 0, c1, totalW, totalH, c2));
+        g2.setPaint(new GradientPaint(0, 0, new java.awt.Color(56, 189, 248), totalW, totalH, new java.awt.Color(99, 102, 241)));
         g2.fillRect(0, 0, totalW, totalH);
-
-        g2.setColor(new java.awt.Color(0, 0, 0, 70));
+        g2.setColor(new java.awt.Color(0, 0, 0, 80));
         g2.fillRoundRect(pad + 4, pad + 10, w, h, radius, radius);
 
         BufferedImage roundedFg = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
@@ -516,112 +970,81 @@ public class RadialConverterApp extends Application {
     }
 
     // =========================================================
-    // 5. SUMMON CENTERED AT FILE + COMMAND/SHIFT HOOK
+    // 7. SUMMON MENU
     // =========================================================
-    public void summonAtCursor() {
-        Point p = MouseInfo.getPointerInfo().getLocation();
-        Platform.runLater(() -> {
-            Rectangle2D screenBounds = Screen.getPrimary().getVisualBounds();
+    public void summonRadialMenu() {
+        Point cursor = MouseInfo.getPointerInfo().getLocation();
 
-            // Center the radial wheel directly on the cursor, clamped inside screen edges
-            double targetX = Math.max(screenBounds.getMinX() + 10,
-                    Math.min(p.x - SIZE / 2.0, screenBounds.getMaxX() - SIZE - 10));
-            double targetY = Math.max(screenBounds.getMinY() + 10,
-                    Math.min(p.y - SIZE / 2.0, screenBounds.getMaxY() - SIZE - 10));
+        CompletableFuture.runAsync(() -> {
+            File selected = getCurrentlySelectedFileFromOS();
 
-            radialStage.setX(targetX);
-            radialStage.setY(targetY);
+            Platform.runLater(() -> {
+                if (radialStage.isShowing()) {
+                    radialStage.hide();
+                    return;
+                }
 
-            if (!radialStage.isShowing()) {
-                wheelPane.setScaleX(0.75);
-                wheelPane.setScaleY(0.75);
+                activeFile = selected;
+                isToolsMode = false;
+                hoveredIndex = -1;
+                centerHovered = false;
+                updateSlicesForFile(activeFile);
+                drawRadialMenu();
+
+                Rectangle2D bounds = Screen.getPrimary().getVisualBounds();
+                double targetX = Math.max(bounds.getMinX() + 8, Math.min(cursor.x - SIZE / 2.0, bounds.getMaxX() - SIZE - 8));
+                double targetY = Math.max(bounds.getMinY() + 8, Math.min(cursor.y - SIZE / 2.0, bounds.getMaxY() - SIZE - 8));
+
+                radialStage.setX(targetX);
+                radialStage.setY(targetY);
+
+                wheelPane.setScaleX(0.82);
+                wheelPane.setScaleY(0.82);
                 radialStage.show();
                 radialStage.toFront();
+                radialStage.requestFocus();
 
-                ScaleTransition st = new ScaleTransition(Duration.millis(140), wheelPane);
+                ScaleTransition st = new ScaleTransition(Duration.millis(95), wheelPane);
                 st.setToX(1.0);
                 st.setToY(1.0);
                 st.play();
-            }
+            });
         });
     }
 
-    private void registerGlobalHook() {
+    private void registerGlobalShortcutHook() {
         try {
             Logger logger = Logger.getLogger(GlobalScreen.class.getPackage().getName());
             logger.setLevel(Level.OFF);
             logger.setUseParentHandlers(false);
 
             GlobalScreen.registerNativeHook();
-            CommandOrShiftDragDetector detector = new CommandOrShiftDragDetector(
-                    this::summonAtCursor,
-                    () -> Platform.runLater(() -> {
-                        if (radialStage.isShowing() && draggedFile == null) {
-                            radialStage.hide();
-                        }
-                    })
-            );
-            GlobalScreen.addNativeMouseListener(detector);
-            GlobalScreen.addNativeMouseMotionListener(detector);
-            GlobalScreen.addNativeKeyListener(detector);
-        } catch (Exception e) {
-            System.err.println("Please grant Accessibility Permission to VS Code / Terminal in macOS System Settings -> Privacy & Security -> Accessibility!");
-        }
-    }
+            GlobalScreen.addNativeKeyListener(new NativeKeyListener() {
+                private boolean modifierDown = false;
 
-    private static class CommandOrShiftDragDetector implements NativeMouseInputListener, NativeKeyListener {
-        private boolean mouseDown = false;
-        private boolean isDragging = false;
-        private boolean modifierHeld = false;
-        private final Runnable onSummon;
-        private final Runnable onRelease;
-
-        public CommandOrShiftDragDetector(Runnable onSummon, Runnable onRelease) {
-            this.onSummon = onSummon;
-            this.onRelease = onRelease;
-        }
-
-        @Override
-        public void nativeMousePressed(NativeMouseEvent e) {
-            mouseDown = true;
-            if (modifierHeld) {
-                onSummon.run();
-            }
-        }
-
-        @Override
-        public void nativeMouseDragged(NativeMouseEvent e) {
-            isDragging = true;
-            if (modifierHeld) {
-                onSummon.run();
-            }
-        }
-
-        @Override
-        public void nativeMouseReleased(NativeMouseEvent e) {
-            mouseDown = false;
-            isDragging = false;
-            onRelease.run();
-        }
-
-        @Override
-        public void nativeKeyPressed(NativeKeyEvent e) {
-            int code = e.getKeyCode();
-            // Triggers on Mac COMMAND (VC_META) OR SHIFT (VC_SHIFT)
-            if (code == NativeKeyEvent.VC_META || code == NativeKeyEvent.VC_SHIFT) {
-                modifierHeld = true;
-                if (mouseDown || isDragging) {
-                    onSummon.run();
+                @Override
+                public void nativeKeyPressed(NativeKeyEvent e) {
+                    int code = e.getKeyCode();
+                    if (IS_MAC && (code == NativeKeyEvent.VC_META || code == 3675 || code == 3676)) {
+                        modifierDown = true;
+                    } else if (!IS_MAC && code == NativeKeyEvent.VC_SHIFT) {
+                        modifierDown = true;
+                    } else if (modifierDown && code == NativeKeyEvent.VC_E) {
+                        summonRadialMenu();
+                    }
                 }
-            }
-        }
 
-        @Override
-        public void nativeKeyReleased(NativeKeyEvent e) {
-            int code = e.getKeyCode();
-            if (code == NativeKeyEvent.VC_META || code == NativeKeyEvent.VC_SHIFT) {
-                modifierHeld = false;
-            }
+                @Override
+                public void nativeKeyReleased(NativeKeyEvent e) {
+                    int code = e.getKeyCode();
+                    if ((IS_MAC && (code == NativeKeyEvent.VC_META || code == 3675 || code == 3676))
+                            || (!IS_MAC && code == NativeKeyEvent.VC_SHIFT)) {
+                        modifierDown = false;
+                    }
+                }
+            });
+        } catch (Exception e) {
+            System.err.println("⚠️ Grant Accessibility Permission in System Settings -> Privacy & Security -> Accessibility.");
         }
     }
 
