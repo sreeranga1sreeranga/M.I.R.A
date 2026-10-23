@@ -4,7 +4,9 @@ import com.github.kwhat.jnativehook.GlobalScreen;
 import com.github.kwhat.jnativehook.keyboard.NativeKeyEvent;
 import com.github.kwhat.jnativehook.keyboard.NativeKeyListener;
 
+import javafx.animation.KeyFrame;
 import javafx.animation.ScaleTransition;
+import javafx.animation.Timeline;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.embed.swing.SwingFXUtils;
@@ -43,12 +45,14 @@ import org.apache.pdfbox.rendering.PDFRenderer;
 import org.apache.pdfbox.text.PDFTextStripper;
 
 import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.apache.poi.xslf.usermodel.XMLSlideShow;
 import org.apache.poi.xslf.usermodel.XSLFShape;
 import org.apache.poi.xslf.usermodel.XSLFSlide;
 import org.apache.poi.xslf.usermodel.XSLFTextShape;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.apache.poi.xwpf.usermodel.XWPFParagraph;
+import org.apache.poi.xwpf.usermodel.XWPFRun;
 
 import javax.imageio.ImageIO;
 import java.awt.AlphaComposite;
@@ -64,12 +68,15 @@ import java.awt.image.BufferedImage;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 public class RadialConverterApp extends Application {
@@ -77,23 +84,27 @@ public class RadialConverterApp extends Application {
     private static final boolean IS_MAC = System.getProperty("os.name").toLowerCase().contains("mac");
     private static final String OS_FONT = IS_MAC ? "SF Pro Display" : "Segoe UI Variable";
 
-    private static final double SIZE = 260;
-    private static final double OUTER_R = 104;
-    private static final double INNER_R = 40;
+    // Minimalist Luxury Proportions
+    private static final double SIZE = 290;
+    private static final double OUTER_R = 114;
+    private static final double INNER_R = 46;
+    private static final double GAP_DEGREES = 3.2; // Architectural gap between slices
 
     private Stage radialStage;
     private Pane wheelPane;
     private boolean isToolsMode = false;
-    private boolean isOsDarkMode = true;
-    private List<String> currentSlices = Arrays.asList("JPG", "PNG", "HEIC", "WEBP", "PDF");
+    private List<String> currentSlices = Arrays.asList("PNG", "JPG", "WEBP", "PDF");
     private int hoveredIndex = -1;
     private boolean centerHovered = false;
     private File activeFile = null;
 
+    // 3 Luxury Market Themes: 0 = Obsidian & Champagne Gold, 1 = Titanium Frost, 2 = Midnight Emerald
+    private int luxuryThemeIndex = 0;
+    private static final String[] THEME_NAMES = {"OBSIDIAN GOLD", "TITANIUM FROST", "MIDNIGHT EMERALD"};
+
     @Override
     public void start(Stage primaryStage) {
         Platform.setImplicitExit(false);
-        isOsDarkMode = detectOsDarkMode();
 
         radialStage = new Stage(StageStyle.TRANSPARENT);
         radialStage.setAlwaysOnTop(true);
@@ -102,10 +113,10 @@ public class RadialConverterApp extends Application {
         wheelPane.setPrefSize(SIZE, SIZE);
         wheelPane.setStyle("-fx-background-color: transparent;");
 
-        DropShadow shadow = new DropShadow();
-        shadow.setRadius(20);
-        shadow.setColor(Color.rgb(0, 0, 0, 0.65));
-        wheelPane.setEffect(shadow);
+        DropShadow ambientShadow = new DropShadow();
+        ambientShadow.setRadius(28);
+        ambientShadow.setColor(Color.rgb(0, 0, 0, 0.72));
+        wheelPane.setEffect(ambientShadow);
 
         Scene scene = new Scene(wheelPane, SIZE, SIZE, Color.TRANSPARENT);
         setupInteractions(scene);
@@ -121,112 +132,98 @@ public class RadialConverterApp extends Application {
         registerGlobalShortcutHook();
 
         System.out.println("==========================================================");
-        System.out.println("✨ M.I.R.A. Ready — Clean Build Loaded");
-        System.out.println("👉 Select ANY file in Finder/Desktop and press COMMAND + E");
+        System.out.println("✨ M.I.R.A. Luxury Edition — 100% Offline Conversion Engine");
+        System.out.println("👉 Select ANY file and press COMMAND + E (Mac) / SHIFT + E (Win)");
+        System.out.println("🎨 Press TAB while the wheel is open to switch Luxury Themes!");
         System.out.println("==========================================================");
     }
 
-    private boolean detectOsDarkMode() {
-        try {
-            if (IS_MAC) {
-                Process p = new ProcessBuilder("defaults", "read", "-g", "AppleInterfaceStyle").start();
-                try (BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
-                    String out = r.readLine();
-                    return out != null && out.trim().equalsIgnoreCase("Dark");
-                }
-            }
-        } catch (Exception ignored) {
-        }
-        return true;
-    }
-
     // =========================================================
-    // 1. FILE-TYPE OPTIONS
+    // 1. STRICT OFFLINE CONVERSION MAP (Crop Removed!)
     // =========================================================
     private void updateSlicesForFile(File file) {
         if (file == null) {
-            currentSlices = Arrays.asList("PNG", "JPG", "PDF", "TXT", "CSV", "JSON");
+            currentSlices = Arrays.asList("PICK FILE");
             return;
         }
 
         String name = file.getName().toLowerCase();
         String ext = name.contains(".") ? name.substring(name.lastIndexOf('.') + 1) : "";
 
-        // EXCEL & CSV (.xlsx, .xls, .csv, .tsv)
+        // 1. SPREADSHEETS (.xlsx, .xls, .csv, .tsv)
         if (Arrays.asList("xlsx", "xls", "csv", "tsv").contains(ext)) {
             if (isToolsMode) {
                 currentSlices = Arrays.asList("SORT A-Z", "DEDUPE", "SUMMARY");
             } else {
-                List<String> opts = IS_MAC
-                        ? Arrays.asList("JSON", "CSV", "HTML", "PDF", "TXT", "NUMBERS")
-                        : Arrays.asList("JSON", "CSV", "HTML", "PDF", "TXT");
-                currentSlices = opts.stream().filter(s -> !s.equalsIgnoreCase(ext)).toList();
+                List<String> opts = Arrays.asList("JSON", "CSV", "XLSX", "HTML", "PDF", "TXT");
+                String filter = ext.equals("xls") ? "XLSX" : ext.toUpperCase();
+                currentSlices = opts.stream().filter(s -> !s.equalsIgnoreCase(filter)).toList();
             }
             return;
         }
 
-        // POWERPOINT (.pptx, .ppt)
-        if (Arrays.asList("pptx", "ppt").contains(ext)) {
-            if (isToolsMode) {
-                currentSlices = Arrays.asList("EXTRACT TXT", "SLIDE 1 PNG");
-            } else {
-                currentSlices = IS_MAC
-                        ? Arrays.asList("PDF", "PNG", "TXT", "HTML", "KEYNOTE")
-                        : Arrays.asList("PDF", "PNG", "TXT", "HTML");
-            }
-            return;
-        }
-
-        // WORD, TEXT & WEB ARCHIVES (.docx, .doc, .rtf, .txt, .md, .html, .mhtml)
-        if (Arrays.asList("docx", "doc", "rtf", "txt", "md", "html", "htm", "mhtml").contains(ext)) {
-            if (isToolsMode) {
-                currentSlices = Arrays.asList("SUMMARY", "UPPERCASE", "CLEAN TXT");
-            } else {
-                List<String> opts = IS_MAC
-                        ? Arrays.asList("PDF", "TXT", "HTML", "RTF", "DOCX", "PAGES")
-                        : Arrays.asList("PDF", "TXT", "HTML", "RTF", "DOCX");
-                currentSlices = opts.stream().filter(s -> !s.equalsIgnoreCase(ext)).toList();
-            }
-            return;
-        }
-
-        // PDF DOCUMENTS (.pdf)
-        if (ext.equals("pdf")) {
-            if (isToolsMode) {
-                currentSlices = Arrays.asList("SUMMARY", "ALL PAGES PNG");
-            } else {
-                currentSlices = IS_MAC
-                        ? Arrays.asList("JPG", "PNG", "TXT", "HTML", "DOCX", "PAGES")
-                        : Arrays.asList("JPG", "PNG", "TXT", "HTML", "DOCX");
-            }
-            return;
-        }
-
-        // IMAGES (.jpg, .jpeg, .png, .heic, .webp, .bmp, .tiff)
+        // 2. IMAGES (.jpg, .jpeg, .png, .heic, .webp, .bmp, .tiff) -> NO CROP!
         if (Arrays.asList("jpg", "jpeg", "png", "heic", "webp", "bmp", "tiff").contains(ext)) {
             if (isToolsMode) {
-                currentSlices = Arrays.asList("ADD BG", "CROP", "COMPRESS", "GRAYSCALE");
+                currentSlices = Arrays.asList("ADD BG", "COMPRESS", "GRAYSCALE");
             } else {
                 List<String> allImg = IS_MAC
-                        ? Arrays.asList("JPG", "PNG", "HEIC", "WEBP", "TIFF", "PDF")
-                        : Arrays.asList("JPG", "PNG", "WEBP", "TIFF", "BMP", "PDF");
+                        ? Arrays.asList("PNG", "JPG", "WEBP", "HEIC", "TIFF", "BMP", "PDF")
+                        : Arrays.asList("PNG", "JPG", "WEBP", "TIFF", "BMP", "PDF");
                 String filterExt = ext.equals("jpeg") ? "JPG" : ext.toUpperCase();
                 currentSlices = allImg.stream().filter(s -> !s.equals(filterExt)).toList();
             }
             return;
         }
 
-        // JSON FILES (.json)
-        if (ext.equals("json")) {
-            currentSlices = Arrays.asList("CSV", "HTML", "PDF", "TXT");
+        // 3. PDF DOCUMENTS (.pdf)
+        if (ext.equals("pdf")) {
+            if (isToolsMode) {
+                currentSlices = Arrays.asList("SUMMARY", "ALL PAGES PNG");
+            } else {
+                currentSlices = Arrays.asList("DOCX", "TXT", "HTML", "JPG", "PNG");
+            }
             return;
         }
 
-        currentSlices = Arrays.asList("PDF", "TXT", "HTML");
+        // 4. WORD & TEXT DOCUMENTS (.docx, .doc, .rtf, .txt, .md)
+        if (Arrays.asList("docx", "doc", "rtf", "txt", "md").contains(ext)) {
+            if (isToolsMode) {
+                currentSlices = Arrays.asList("SUMMARY", "UPPERCASE", "CLEAN TXT");
+            } else {
+                List<String> opts = IS_MAC
+                        ? Arrays.asList("PDF", "DOCX", "TXT", "HTML", "RTF")
+                        : Arrays.asList("PDF", "DOCX", "TXT", "HTML");
+                currentSlices = opts.stream().filter(s -> !s.equalsIgnoreCase(ext)).toList();
+            }
+            return;
+        }
+
+        // 5. POWERPOINT PRESENTATIONS (.pptx, .ppt)
+        if (Arrays.asList("pptx", "ppt").contains(ext)) {
+            if (isToolsMode) {
+                currentSlices = Arrays.asList("EXTRACT TXT", "SLIDE 1 PNG");
+            } else {
+                currentSlices = Arrays.asList("PDF", "PNG", "TXT", "HTML");
+            }
+            return;
+        }
+
+        // 6. JSON & WEB FILES (.json, .html, .htm, .mhtml)
+        if (ext.equals("json")) {
+            currentSlices = Arrays.asList("CSV", "XLSX", "HTML", "PDF", "TXT");
+            return;
+        }
+        if (Arrays.asList("html", "htm", "mhtml").contains(ext)) {
+            currentSlices = Arrays.asList("PDF", "DOCX", "TXT");
+            return;
+        }
+
+        currentSlices = Arrays.asList("PDF", "TXT");
     }
 
     // =========================================================
-    // 2. RADIAL WHEEL RENDERER
+    // 2. MINIMALIST LUXURY RADIAL RENDERER (Separated Floating Arcs)
     // =========================================================
     private void drawRadialMenu() {
         wheelPane.getChildren().clear();
@@ -235,44 +232,85 @@ public class RadialConverterApp extends Application {
         int count = currentSlices.size();
         double step = 360.0 / count;
 
-        LinearGradient sliceBase = isOsDarkMode
-                ? new LinearGradient(0, 0, 0, 1, true, CycleMethod.NO_CYCLE,
-                        new Stop(0, Color.rgb(22, 27, 38, 0.90)),
-                        new Stop(1, Color.rgb(13, 17, 24, 0.94)))
-                : new LinearGradient(0, 0, 0, 1, true, CycleMethod.NO_CYCLE,
-                        new Stop(0, Color.rgb(244, 247, 252, 0.94)),
-                        new Stop(1, Color.rgb(225, 232, 242, 0.96)));
+        // Luxury Palette Selection
+        LinearGradient baseGrad;
+        LinearGradient hoverGrad;
+        Color strokeBase;
+        Color strokeHover;
+        Color textBase;
+        Color textHover;
+        Color accentColor;
 
-        LinearGradient sliceHover = new LinearGradient(0, 0, 1, 1, true, CycleMethod.NO_CYCLE,
-                new Stop(0, Color.rgb(37, 99, 235, 0.96)),
-                new Stop(1, Color.rgb(79, 70, 229, 0.96)));
+        if (luxuryThemeIndex == 0) {
+            // Theme 0: OBSIDIAN & CHAMPAGNE GOLD (Luxury Watch / Bang & Olufsen Vibe)
+            baseGrad = new LinearGradient(0, 0, 0, 1, true, CycleMethod.NO_CYCLE,
+                    new Stop(0, Color.rgb(18, 19, 24, 0.94)),
+                    new Stop(1, Color.rgb(10, 11, 14, 0.97)));
+            hoverGrad = new LinearGradient(0, 0, 1, 1, true, CycleMethod.NO_CYCLE,
+                    new Stop(0, Color.rgb(212, 175, 55, 0.92)),
+                    new Stop(1, Color.rgb(170, 130, 30, 0.95)));
+            strokeBase = Color.rgb(212, 175, 55, 0.25);
+            strokeHover = Color.rgb(255, 235, 160, 0.95);
+            textBase = Color.rgb(235, 232, 225);
+            textHover = Color.rgb(12, 12, 14);
+            accentColor = Color.rgb(225, 190, 90);
+        } else if (luxuryThemeIndex == 1) {
+            // Theme 1: TITANIUM FROST (Minimalist Apple Vision / Teenage Engineering Vibe)
+            baseGrad = new LinearGradient(0, 0, 0, 1, true, CycleMethod.NO_CYCLE,
+                    new Stop(0, Color.rgb(248, 250, 252, 0.94)),
+                    new Stop(1, Color.rgb(226, 232, 240, 0.97)));
+            hoverGrad = new LinearGradient(0, 0, 1, 1, true, CycleMethod.NO_CYCLE,
+                    new Stop(0, Color.rgb(15, 23, 42, 0.96)),
+                    new Stop(1, Color.rgb(30, 41, 59, 0.98)));
+            strokeBase = Color.rgb(148, 163, 184, 0.45);
+            strokeHover = Color.rgb(56, 189, 248, 0.90);
+            textBase = Color.rgb(15, 23, 42);
+            textHover = Color.rgb(248, 250, 252);
+            accentColor = Color.rgb(2, 132, 199);
+        } else {
+            // Theme 2: MIDNIGHT EMERALD & PLATINUM
+            baseGrad = new LinearGradient(0, 0, 0, 1, true, CycleMethod.NO_CYCLE,
+                    new Stop(0, Color.rgb(11, 24, 21, 0.94)),
+                    new Stop(1, Color.rgb(6, 15, 13, 0.97)));
+            hoverGrad = new LinearGradient(0, 0, 1, 1, true, CycleMethod.NO_CYCLE,
+                    new Stop(0, Color.rgb(16, 185, 129, 0.92)),
+                    new Stop(1, Color.rgb(5, 150, 105, 0.96)));
+            strokeBase = Color.rgb(167, 243, 208, 0.22);
+            strokeHover = Color.rgb(209, 250, 229, 0.95);
+            textBase = Color.rgb(236, 253, 245);
+            textHover = Color.rgb(6, 20, 16);
+            accentColor = Color.rgb(52, 211, 153);
+        }
 
-        Color borderColor = isOsDarkMode ? Color.rgb(255, 255, 255, 0.28) : Color.rgb(30, 41, 59, 0.25);
-        Color baseTextColor = isOsDarkMode ? Color.rgb(248, 250, 252) : Color.rgb(15, 23, 42);
+        // Subtle Outer Halo Ring
+        Circle outerHalo = new Circle(cx, cy, OUTER_R + 7);
+        outerHalo.setFill(Color.TRANSPARENT);
+        outerHalo.setStroke(strokeBase);
+        outerHalo.setStrokeWidth(0.8);
+        wheelPane.getChildren().add(outerHalo);
 
-        Circle outerRim = new Circle(cx, cy, OUTER_R + 5);
-        outerRim.setFill(isOsDarkMode ? Color.rgb(10, 12, 18, 0.55) : Color.rgb(255, 255, 255, 0.55));
-        outerRim.setStroke(isOsDarkMode ? Color.rgb(255, 255, 255, 0.45) : Color.rgb(15, 23, 42, 0.35));
-        outerRim.setStrokeWidth(1.5);
-        wheelPane.getChildren().add(outerRim);
+        double actualGap = count > 1 ? GAP_DEGREES : 0;
 
         for (int i = 0; i < count; i++) {
-            double startAngle = 90 + (step / 2.0) - (i * step);
-            Path slice = createDonutSlice(cx, cy, INNER_R, OUTER_R, startAngle, -step);
-
             boolean isHovered = (i == hoveredIndex);
-            slice.setFill(isHovered ? sliceHover : sliceBase);
-            slice.setStroke(isHovered ? Color.rgb(147, 197, 253, 0.95) : borderColor);
-            slice.setStrokeWidth(isHovered ? 1.8 : 1.1);
+            double rOut = isHovered ? OUTER_R + 3 : OUTER_R; // Subtle luxury expansion on hover
+            double startAngle = 90 + (step / 2.0) - (i * step) - (actualGap / 2.0);
+            double sweepAngle = -(step - actualGap);
 
-            double midRad = Math.toRadians(startAngle - (step / 2.0));
-            double textR = (INNER_R + OUTER_R) / 2.0;
+            Path slice = createDonutSlice(cx, cy, INNER_R, rOut, startAngle, sweepAngle);
+            slice.setFill(isHovered ? hoverGrad : baseGrad);
+            slice.setStroke(isHovered ? strokeHover : strokeBase);
+            slice.setStrokeWidth(isHovered ? 1.4 : 0.9);
+            slice.setStrokeLineJoin(StrokeLineJoin.ROUND);
+
+            double midRad = Math.toRadians(90 - (i * step));
+            double textR = (INNER_R + rOut) / 2.0;
             double tx = cx + textR * Math.cos(midRad);
             double ty = cy - textR * Math.sin(midRad);
 
             Text label = new Text(currentSlices.get(i));
-            label.setFont(Font.font(OS_FONT, FontWeight.BOLD, count > 6 ? 10 : 11.5));
-            label.setFill(isHovered ? Color.WHITE : baseTextColor);
+            label.setFont(Font.font(OS_FONT, FontWeight.BOLD, count > 6 ? 10.0 : 11.0));
+            label.setFill(isHovered ? textHover : textBase);
             label.setMouseTransparent(true);
             label.setX(tx - label.getLayoutBounds().getWidth() / 2);
             label.setY(ty + 4);
@@ -280,32 +318,31 @@ public class RadialConverterApp extends Application {
             wheelPane.getChildren().addAll(slice, label);
         }
 
-        Circle hub = new Circle(cx, cy, INNER_R - 2);
-        hub.setFill(centerHovered
-                ? sliceHover
-                : (isOsDarkMode ? Color.rgb(15, 23, 42, 0.96) : Color.rgb(255, 255, 255, 0.96)));
-        hub.setStroke(Color.rgb(59, 130, 246, 0.85));
-        hub.setStrokeWidth(1.8);
+        // Minimalist Luxury Center Medallion
+        Circle hub = new Circle(cx, cy, INNER_R - 4);
+        hub.setFill(centerHovered ? hoverGrad : baseGrad);
+        hub.setStroke(centerHovered ? strokeHover : accentColor);
+        hub.setStrokeWidth(1.3);
 
-        String extBadge = "PICK FILE";
+        String extBadge = "SELECT";
         if (activeFile != null) {
             String n = activeFile.getName();
             extBadge = n.contains(".") ? n.substring(n.lastIndexOf('.') + 1).toUpperCase() : "FILE";
         }
 
-        String topLine = centerHovered ? (isToolsMode ? "CONVERT" : "TOOLS") : "[" + extBadge + "]";
-        String botLine = activeFile == null ? "Click Here" : (centerHovered ? "Switch" : "Click:Tools");
+        String topLine = centerHovered ? (isToolsMode ? "CONVERT" : "TOOLS") : extBadge;
+        String botLine = activeFile == null ? "Browse" : (isToolsMode ? "MODE" : "OPTIONS");
 
         Text hubTitle = new Text(topLine);
-        hubTitle.setFont(Font.font(OS_FONT, FontWeight.EXTRA_BOLD, 10.0));
-        hubTitle.setFill(centerHovered ? Color.WHITE : Color.rgb(96, 165, 250));
+        hubTitle.setFont(Font.font(OS_FONT, FontWeight.EXTRA_BOLD, 10.5));
+        hubTitle.setFill(centerHovered ? textHover : accentColor);
         hubTitle.setMouseTransparent(true);
         hubTitle.setX(cx - hubTitle.getLayoutBounds().getWidth() / 2);
-        hubTitle.setY(cy - 2);
+        hubTitle.setY(cy - 1);
 
         Text hubSub = new Text(botLine);
-        hubSub.setFont(Font.font(OS_FONT, FontWeight.SEMI_BOLD, 8.5));
-        hubSub.setFill(centerHovered ? Color.WHITE : baseTextColor);
+        hubSub.setFont(Font.font(OS_FONT, FontWeight.MEDIUM, 7.5));
+        hubSub.setFill(centerHovered ? textHover : textBase.deriveColor(0, 1, 1, 0.65));
         hubSub.setMouseTransparent(true);
         hubSub.setX(cx - hubSub.getLayoutBounds().getWidth() / 2);
         hubSub.setY(cy + 10);
@@ -327,7 +364,7 @@ public class RadialConverterApp extends Application {
     }
 
     // =========================================================
-    // 3. INTERACTIONS
+    // 3. INTERACTIONS (Click, Hover, Tab to Cycle Luxury Themes)
     // =========================================================
     private void setupInteractions(Scene scene) {
         scene.setCursor(Cursor.HAND);
@@ -353,7 +390,7 @@ public class RadialConverterApp extends Application {
                     updateSlicesForFile(activeFile);
                     drawRadialMenu();
                 }
-            } else if (dist <= OUTER_R && hoveredIndex >= 0 && hoveredIndex < currentSlices.size()) {
+            } else if (dist <= OUTER_R + 4 && hoveredIndex >= 0 && hoveredIndex < currentSlices.size()) {
                 String action = currentSlices.get(hoveredIndex);
                 File target = activeFile;
                 hoveredIndex = -1;
@@ -361,11 +398,8 @@ public class RadialConverterApp extends Application {
                 radialStage.hide();
 
                 if (target != null) {
-                    if (action.equals("ADD BG") || action.equals("CROP")) {
-                        Platform.runLater(() -> {
-                            if (action.equals("ADD BG")) showAddBgModal(target);
-                            else showCropModal(target);
-                        });
+                    if (action.equals("ADD BG")) {
+                        Platform.runLater(() -> showAddBgModal(target));
                     } else {
                         CompletableFuture.runAsync(() -> executeFileAction(target, action));
                     }
@@ -376,7 +410,12 @@ public class RadialConverterApp extends Application {
         });
 
         scene.setOnKeyPressed(e -> {
-            if (e.getCode() == KeyCode.ESCAPE) radialStage.hide();
+            if (e.getCode() == KeyCode.ESCAPE) {
+                radialStage.hide();
+            } else if (e.getCode() == KeyCode.TAB) {
+                luxuryThemeIndex = (luxuryThemeIndex + 1) % THEME_NAMES.length;
+                drawRadialMenu();
+            }
         });
 
         scene.setOnDragOver(e -> {
@@ -411,7 +450,7 @@ public class RadialConverterApp extends Application {
                 hoveredIndex = -1;
                 drawRadialMenu();
             }
-        } else if (dist <= OUTER_R) {
+        } else if (dist <= OUTER_R + 4) {
             centerHovered = false;
             int count = currentSlices.size();
             double step = 360.0 / count;
@@ -431,7 +470,7 @@ public class RadialConverterApp extends Application {
     }
 
     // =========================================================
-    // 4. RESTORED MULTI-LINE FINDER APPLESCRIPT (The One That Worked!)
+    // 4. FINDER / EXPLORER SELECTION DETECTOR
     // =========================================================
     private File getCurrentlySelectedFileFromOS() {
         try {
@@ -450,10 +489,7 @@ public class RadialConverterApp extends Application {
                     String path = reader.readLine();
                     if (path != null && !path.isBlank()) {
                         File f = new File(path.trim());
-                        if (f.exists()) {
-                            System.out.println("🎯 M.I.R.A. Locked onto File: " + f.getAbsolutePath());
-                            return f;
-                        }
+                        if (f.exists()) return f;
                     }
                 }
             } else {
@@ -477,11 +513,11 @@ public class RadialConverterApp extends Application {
     }
 
     // =========================================================
-    // 5. UNIVERSAL CONVERSION ENGINE
+    // 5. 100% OFFLINE UNIVERSAL CONVERSION ENGINE
     // =========================================================
     private void executeFileAction(File file, String action) {
         try {
-            System.out.println("⚙️ Converting '" + file.getName() + "' -> " + action + "...");
+            System.out.println("⚙️ [OFFLINE ENGINE] Converting '" + file.getName() + "' -> " + action + "...");
             String path = file.getAbsolutePath();
             int dotIndex = path.lastIndexOf('.');
             String baseName = (dotIndex > 0) ? path.substring(0, dotIndex) : path;
@@ -489,12 +525,8 @@ public class RadialConverterApp extends Application {
             String targetExt = action.toLowerCase();
             File outputCreated = null;
 
-            // A. EXCEL (.xlsx, .xls) & CSV/TSV
+            // A. SPREADSHEETS (.xlsx, .xls, .csv, .tsv)
             if (Arrays.asList("xlsx", "xls", "csv", "tsv").contains(ext)) {
-                if (action.equals("NUMBERS") && IS_MAC) {
-                    new ProcessBuilder("open", "-a", "Numbers", path).start();
-                    return;
-                }
                 List<List<String>> table = readSpreadsheetToTable(file, ext);
                 if (table.isEmpty()) return;
 
@@ -519,28 +551,16 @@ public class RadialConverterApp extends Application {
                 } else if (action.equals("CSV")) {
                     outputCreated = new File(baseName + ".csv");
                     writeTableToCsv(table, outputCreated);
+                } else if (action.equals("XLSX")) {
+                    outputCreated = new File(baseName + ".xlsx");
+                    writeTableToXlsx(table, outputCreated);
                 } else if (action.equals("TXT")) {
                     String txt = table.stream().map(r -> String.join("\t", r)).collect(Collectors.joining("\n"));
                     outputCreated = new File(baseName + ".txt");
                     Files.writeString(outputCreated.toPath(), txt);
                 } else if (action.equals("HTML")) {
-                    StringBuilder html = new StringBuilder("<html><head><meta charset='UTF-8'><style>"
-                            + "body{font-family:-apple-system,sans-serif;padding:24px;background:#f8fafc;}"
-                            + "table{border-collapse:collapse;width:100%;background:white;}"
-                            + "th,td{border:1px solid #cbd5e1;padding:8px 12px;text-align:left;font-size:13px;}"
-                            + "th{background:#1e293b;color:white;}</style></head><body><table>\n");
-                    for (int i = 0; i < table.size(); i++) {
-                        html.append("<tr>");
-                        for (String cell : table.get(i)) {
-                            html.append(i == 0 ? "<th>" : "<td>")
-                                    .append(cell.replace("&", "&amp;").replace("<", "&lt;"))
-                                    .append(i == 0 ? "</th>" : "</td>");
-                        }
-                        html.append("</tr>\n");
-                    }
-                    html.append("</table></body></html>");
                     outputCreated = new File(baseName + ".html");
-                    Files.writeString(outputCreated.toPath(), html.toString());
+                    Files.writeString(outputCreated.toPath(), buildHtmlTable(table));
                 } else if (action.equals("JSON")) {
                     List<String> headers = table.get(0);
                     StringBuilder json = new StringBuilder("[\n");
@@ -566,12 +586,8 @@ public class RadialConverterApp extends Application {
                 }
             }
 
-            // B. POWERPOINT (.pptx)
+            // B. POWERPOINT (.pptx, .ppt)
             else if (Arrays.asList("pptx", "ppt").contains(ext)) {
-                if (action.equals("KEYNOTE") && IS_MAC) {
-                    new ProcessBuilder("open", "-a", "Keynote", path).start();
-                    return;
-                }
                 try (FileInputStream fis = new FileInputStream(file);
                      XMLSlideShow ppt = new XMLSlideShow(fis)) {
                     Dimension pgsize = ppt.getPageSize();
@@ -618,10 +634,6 @@ public class RadialConverterApp extends Application {
 
             // C. WORD DOCS, HTML & MHTML (.docx, .doc, .rtf, .txt, .md, .html, .mhtml)
             else if (Arrays.asList("docx", "doc", "rtf", "txt", "md", "html", "htm", "mhtml").contains(ext)) {
-                if (action.equals("PAGES") && IS_MAC) {
-                    new ProcessBuilder("open", "-a", "Pages", path).start();
-                    return;
-                }
                 String extractedText = extractTextFromDocOrWeb(file, ext);
                 if (action.equals("UPPERCASE")) {
                     outputCreated = new File(baseName + "_UPPER.txt");
@@ -636,7 +648,10 @@ public class RadialConverterApp extends Application {
                 } else if (action.equals("PDF")) {
                     outputCreated = new File(baseName + ".pdf");
                     createSimplePdfFromText(extractedText, outputCreated);
-                } else if (IS_MAC && Arrays.asList("html", "rtf", "docx").contains(targetExt) && !ext.equals("mhtml")) {
+                } else if (action.equals("DOCX")) {
+                    outputCreated = new File(baseName + "_Converted.docx");
+                    writeTextToDocx(extractedText, outputCreated);
+                } else if (IS_MAC && Arrays.asList("html", "rtf").contains(targetExt) && !ext.equals("mhtml")) {
                     outputCreated = new File(baseName + "_Converted." + targetExt);
                     new ProcessBuilder("textutil", "-convert", targetExt, path, "-output", outputCreated.getAbsolutePath())
                             .start().waitFor();
@@ -652,23 +667,16 @@ public class RadialConverterApp extends Application {
                     if (action.equals("TXT") || action.equals("HTML") || action.equals("SUMMARY")) {
                         String text = new PDFTextStripper().getText(doc);
                         outputCreated = new File(baseName + (action.equals("HTML") ? ".html" : ".txt"));
+                        if (action.equals("HTML")) {
+                            text = "<html><body style='font-family:sans-serif;padding:24px;line-height:1.6;'><pre style='white-space:pre-wrap;'>"
+                                    + text.replace("&", "&amp;").replace("<", "&lt;") + "</pre></body></html>";
+                        }
                         Files.writeString(outputCreated.toPath(), text);
                     } else if (action.equals("DOCX")) {
+                        // 100% Offline Cross-Platform PDF -> DOCX via Apache POI XWPFDocument
                         String text = new PDFTextStripper().getText(doc);
-                        File tmpTxt = File.createTempFile("mira_pdf", ".txt");
-                        Files.writeString(tmpTxt.toPath(), text);
                         outputCreated = new File(baseName + ".docx");
-                        if (IS_MAC) {
-                            new ProcessBuilder("textutil", "-convert", "docx", tmpTxt.getAbsolutePath(),
-                                    "-output", outputCreated.getAbsolutePath()).start().waitFor();
-                        } else {
-                            Files.writeString(outputCreated.toPath(), text);
-                        }
-                        tmpTxt.delete();
-                    } else if (action.equals("PAGES") && IS_MAC) {
-                        outputCreated = new File(baseName + ".txt");
-                        Files.writeString(outputCreated.toPath(), new PDFTextStripper().getText(doc));
-                        new ProcessBuilder("open", "-a", "Pages", outputCreated.getAbsolutePath()).start();
+                        writeTextToDocx(text, outputCreated);
                     } else {
                         PDFRenderer renderer = new PDFRenderer(doc);
                         int pagesToRender = action.equals("ALL PAGES PNG") ? doc.getNumberOfPages() : 1;
@@ -689,11 +697,21 @@ public class RadialConverterApp extends Application {
                 }
             }
 
-            // E. JSON FILES (.json)
+            // E. JSON FILES (.json -> CSV, XLSX, HTML, PDF, TXT)
             else if (ext.equals("json")) {
                 String rawJson = Files.readString(file.toPath());
-                if (action.equals("TXT") || action.equals("HTML") || action.equals("CSV")) {
-                    outputCreated = new File(baseName + "." + targetExt);
+                List<List<String>> jsonTable = parseJsonToTable(rawJson);
+                if (action.equals("CSV")) {
+                    outputCreated = new File(baseName + ".csv");
+                    writeTableToCsv(jsonTable, outputCreated);
+                } else if (action.equals("XLSX")) {
+                    outputCreated = new File(baseName + ".xlsx");
+                    writeTableToXlsx(jsonTable, outputCreated);
+                } else if (action.equals("HTML")) {
+                    outputCreated = new File(baseName + ".html");
+                    Files.writeString(outputCreated.toPath(), buildHtmlTable(jsonTable));
+                } else if (action.equals("TXT")) {
+                    outputCreated = new File(baseName + ".txt");
                     Files.writeString(outputCreated.toPath(), rawJson);
                 } else if (action.equals("PDF")) {
                     outputCreated = new File(baseName + ".pdf");
@@ -704,7 +722,7 @@ public class RadialConverterApp extends Application {
             // F. IMAGES (.jpg, .jpeg, .png, .heic, .webp, .bmp, .tiff)
             else if (Arrays.asList("jpg", "jpeg", "png", "heic", "webp", "bmp", "tiff").contains(ext)) {
                 if (action.equals("PDF")) {
-                    BufferedImage img = ImageIO.read(file);
+                    BufferedImage img = readImageWithMacFallback(file);
                     if (img != null) {
                         outputCreated = new File(baseName + ".pdf");
                         try (PDDocument doc = new PDDocument()) {
@@ -723,7 +741,7 @@ public class RadialConverterApp extends Application {
                     new ProcessBuilder("sips", "-s", "format", "jpeg", "-s", "formatOptions", "50",
                             path, "--out", outputCreated.getAbsolutePath()).start().waitFor();
                 } else if (action.equals("GRAYSCALE")) {
-                    BufferedImage src = ImageIO.read(file);
+                    BufferedImage src = readImageWithMacFallback(file);
                     if (src != null) {
                         BufferedImage bw = new BufferedImage(src.getWidth(), src.getHeight(), BufferedImage.TYPE_BYTE_GRAY);
                         Graphics2D g = bw.createGraphics();
@@ -738,8 +756,15 @@ public class RadialConverterApp extends Application {
                     new ProcessBuilder("sips", "-s", "format", sipsFmt, path, "--out", outputCreated.getAbsolutePath())
                             .start().waitFor();
                 } else {
-                    BufferedImage img = ImageIO.read(file);
+                    BufferedImage img = readImageWithMacFallback(file);
                     if (img != null) {
+                        if (targetExt.equals("jpg") || targetExt.equals("bmp")) {
+                            BufferedImage rgb = new BufferedImage(img.getWidth(), img.getHeight(), BufferedImage.TYPE_INT_RGB);
+                            Graphics2D g = rgb.createGraphics();
+                            g.drawImage(img, 0, 0, java.awt.Color.WHITE, null);
+                            g.dispose();
+                            img = rgb;
+                        }
                         outputCreated = new File(baseName + "_Converted." + targetExt);
                         ImageIO.write(img, targetExt, outputCreated);
                     }
@@ -747,7 +772,8 @@ public class RadialConverterApp extends Application {
             }
 
             if (outputCreated != null && outputCreated.exists()) {
-                System.out.println("✅ SUCCESS! Created: " + outputCreated.getAbsolutePath());
+                System.out.println("✅ OFFLINE CONVERSION COMPLETE: " + outputCreated.getAbsolutePath());
+                showLuxuryToast("Created " + outputCreated.getName(), outputCreated);
                 if (IS_MAC) {
                     new ProcessBuilder("afplay", "/System/Library/Sounds/Glass.aiff").start();
                 }
@@ -758,8 +784,105 @@ public class RadialConverterApp extends Application {
     }
 
     // =========================================================
-    // 6. PARSERS & HELPERS
+    // 6. OFFLINE PARSERS & WRITERS (XLSX, DOCX, JSON, HTML, PDF)
     // =========================================================
+    private BufferedImage readImageWithMacFallback(File file) throws Exception {
+        BufferedImage img = ImageIO.read(file);
+        if (img == null && IS_MAC) {
+            File tmp = File.createTempFile("mira_decode", ".png");
+            new ProcessBuilder("sips", "-s", "format", "png", file.getAbsolutePath(), "--out", tmp.getAbsolutePath())
+                    .start().waitFor();
+            img = ImageIO.read(tmp);
+            tmp.delete();
+        }
+        return img;
+    }
+
+    private void writeTableToXlsx(List<List<String>> table, File outXlsx) throws Exception {
+        try (Workbook wb = new XSSFWorkbook(); FileOutputStream fos = new FileOutputStream(outXlsx)) {
+            Sheet sheet = wb.createSheet("Converted Data");
+            for (int r = 0; r < table.size(); r++) {
+                Row row = sheet.createRow(r);
+                List<String> cells = table.get(r);
+                for (int c = 0; c < cells.size(); c++) {
+                    row.createCell(c).setCellValue(cells.get(c));
+                }
+            }
+            wb.write(fos);
+        }
+    }
+
+    private void writeTextToDocx(String text, File outDocx) throws Exception {
+        try (XWPFDocument doc = new XWPFDocument(); FileOutputStream fos = new FileOutputStream(outDocx)) {
+            for (String line : text.split("\\r?\\n")) {
+                XWPFParagraph p = doc.createParagraph();
+                XWPFRun run = p.createRun();
+                run.setText(line);
+                run.setFontSize(11);
+            }
+            doc.write(fos);
+        }
+    }
+
+    private List<List<String>> parseJsonToTable(String rawJson) {
+        List<Map<String, String>> records = new ArrayList<>();
+        Set<String> headers = new LinkedHashSet<>();
+        Matcher objMatcher = Pattern.compile("\\{([^\\{\\}]*)\\}").matcher(rawJson);
+        Pattern kvPattern = Pattern.compile("\"([^\"]+)\"\\s*:\\s*(\"([^\"]*)\"|[^,\\}\\s]+)");
+
+        while (objMatcher.find()) {
+            String body = objMatcher.group(1);
+            Matcher kv = kvPattern.matcher(body);
+            Map<String, String> rowMap = new LinkedHashMap<>();
+            while (kv.find()) {
+                String k = kv.group(1).trim();
+                String v = kv.group(3) != null ? kv.group(3) : kv.group(2).trim();
+                headers.add(k);
+                rowMap.put(k, v);
+            }
+            if (!rowMap.isEmpty()) records.add(rowMap);
+        }
+
+        List<List<String>> table = new ArrayList<>();
+        if (headers.isEmpty()) {
+            table.add(Collections.singletonList("Content"));
+            for (String line : rawJson.split("\\r?\\n")) {
+                table.add(Collections.singletonList(line.trim()));
+            }
+            return table;
+        }
+
+        List<String> headerList = new ArrayList<>(headers);
+        table.add(headerList);
+        for (Map<String, String> rec : records) {
+            List<String> row = new ArrayList<>();
+            for (String h : headerList) {
+                row.add(rec.getOrDefault(h, ""));
+            }
+            table.add(row);
+        }
+        return table;
+    }
+
+    private String buildHtmlTable(List<List<String>> table) {
+        StringBuilder html = new StringBuilder("<html><head><meta charset='UTF-8'><style>"
+                + "body{font-family:-apple-system,sans-serif;padding:28px;background:#0f172a;color:#f8fafc;}"
+                + "table{border-collapse:collapse;width:100%;background:#1e293b;border-radius:8px;overflow:hidden;}"
+                + "th,td{border:1px solid #334155;padding:10px 14px;text-align:left;font-size:13px;}"
+                + "th{background:#090a0f;color:#e1be5a;text-transform:uppercase;letter-spacing:0.05em;}</style></head><body><table>\n");
+        for (int i = 0; i < table.size(); i++) {
+            html.append("<tr>");
+            for (String cell : table.get(i)) {
+                html.append(i == 0 ? "<th>" : "<td>")
+                        .append(cell.replace("&", "&amp;").replace("<", "&lt;"))
+                        .append(i == 0 ? "</th>" : "</td>");
+            }
+            html.append("</tr>\n");
+        }
+        html.append("</table></body></html>");
+        return html.toString();
+    }
+
     private List<List<String>> readSpreadsheetToTable(File file, String ext) throws Exception {
         List<List<String>> rows = new ArrayList<>();
         if (ext.equals("csv") || ext.equals("tsv")) {
@@ -861,53 +984,60 @@ public class RadialConverterApp extends Application {
         }
     }
 
-    private void showCropModal(File file) {
-        try {
-            BufferedImage orig = ImageIO.read(file);
-            if (orig == null) return;
-            Stage modal = new Stage();
-            modal.setTitle("M.I.R.A. — Crop Image");
-            VBox root = new VBox(14);
-            root.setAlignment(Pos.CENTER);
-            root.setStyle("-fx-background-color: #18181B; -fx-padding: 20;");
-            ImageView preview = new ImageView(SwingFXUtils.toFXImage(orig, null));
-            preview.setFitWidth(360);
-            preview.setFitHeight(280);
-            preview.setPreserveRatio(true);
+    // =========================================================
+    // 7. LUXURY TOAST BANNER & ADD BG STUDIO
+    // =========================================================
+    private void showLuxuryToast(String title, File createdFile) {
+        Platform.runLater(() -> {
+            Stage toast = new Stage(StageStyle.TRANSPARENT);
+            toast.setAlwaysOnTop(true);
 
-            Button applyBtn = new Button("Apply Square Crop");
-            applyBtn.setStyle("-fx-background-color: #3B82F6; -fx-text-fill: white; -fx-background-radius: 8; -fx-padding: 8 24; -fx-font-weight: bold;");
-            applyBtn.setOnAction(e -> {
-                try {
-                    int w = orig.getWidth(), h = orig.getHeight();
-                    int m = (int) (Math.min(w, h) * 0.85);
-                    BufferedImage cropped = orig.getSubimage((w - m) / 2, (h - m) / 2, m, m);
-                    String path = file.getAbsolutePath();
-                    File out = new File(path.substring(0, path.lastIndexOf('.')) + "_Cropped.png");
-                    ImageIO.write(cropped, "png", out);
-                    System.out.println("✅ SUCCESS! Created: " + out.getAbsolutePath());
-                    modal.close();
-                } catch (Exception ex) {
-                    ex.printStackTrace();
-                }
-            });
-            root.getChildren().addAll(preview, applyBtn);
-            modal.setScene(new Scene(root, 420, 380));
-            modal.show();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+            HBox banner = new HBox(14);
+            banner.setAlignment(Pos.CENTER_LEFT);
+            banner.setStyle("-fx-background-color: rgba(10, 11, 14, 0.95); -fx-padding: 12 18; "
+                    + "-fx-background-radius: 14; -fx-border-color: rgba(212, 175, 55, 0.55); -fx-border-radius: 14;");
+
+            Label lbl = new Label("✦  " + title);
+            lbl.setFont(Font.font(OS_FONT, FontWeight.BOLD, 12));
+            lbl.setTextFill(Color.rgb(235, 232, 225));
+            banner.getChildren().add(lbl);
+
+            if (createdFile != null && createdFile.exists()) {
+                Button revealBtn = new Button("Reveal");
+                revealBtn.setStyle("-fx-background-color: #D4AF37; -fx-text-fill: #090A0F; -fx-font-weight: bold; -fx-background-radius: 8; -fx-padding: 4 12;");
+                revealBtn.setOnAction(e -> {
+                    try {
+                        if (IS_MAC) {
+                            new ProcessBuilder("open", "-R", createdFile.getAbsolutePath()).start();
+                        } else {
+                            new ProcessBuilder("explorer.exe", "/select,", createdFile.getAbsolutePath()).start();
+                        }
+                        toast.close();
+                    } catch (Exception ignored) {}
+                });
+                banner.getChildren().add(revealBtn);
+            }
+
+            Scene sc = new Scene(banner, Color.TRANSPARENT);
+            toast.setScene(sc);
+            Rectangle2D bounds = Screen.getPrimary().getVisualBounds();
+            toast.setX(bounds.getMaxX() - 360);
+            toast.setY(bounds.getMaxY() - 90);
+            toast.show();
+
+            new Timeline(new KeyFrame(Duration.seconds(3.5), e -> toast.close())).play();
+        });
     }
 
     private void showAddBgModal(File file) {
         try {
-            BufferedImage orig = ImageIO.read(file);
+            BufferedImage orig = readImageWithMacFallback(file);
             if (orig == null) return;
             Stage modal = new Stage();
-            modal.setTitle("M.I.R.A. — Add Background");
-            VBox root = new VBox(12);
+            modal.setTitle("M.I.R.A. Studio — Luxury Frame");
+            VBox root = new VBox(14);
             root.setAlignment(Pos.CENTER);
-            root.setStyle("-fx-background-color: #18181B; -fx-padding: 20;");
+            root.setStyle("-fx-background-color: #090A0F; -fx-padding: 24;");
             ImageView previewView = new ImageView();
             previewView.setFitWidth(380);
             previewView.setFitHeight(250);
@@ -924,14 +1054,14 @@ public class RadialConverterApp extends Application {
             cornerSlider.valueProperty().addListener((o, a, b) -> update.run());
             update.run();
 
-            Button saveBtn = new Button("Save Styled Image");
-            saveBtn.setStyle("-fx-background-color: #3B82F6; -fx-text-fill: white; -fx-background-radius: 8; -fx-padding: 8 20; -fx-font-weight: bold;");
+            Button saveBtn = new Button("Export Framed Image");
+            saveBtn.setStyle("-fx-background-color: #D4AF37; -fx-text-fill: #090A0F; -fx-background-radius: 8; -fx-padding: 8 22; -fx-font-weight: bold;");
             saveBtn.setOnAction(e -> {
                 try {
                     String path = file.getAbsolutePath();
-                    File out = new File(path.substring(0, path.lastIndexOf('.')) + "_Styled.png");
+                    File out = new File(path.substring(0, path.lastIndexOf('.')) + "_Framed.png");
                     ImageIO.write(latestRender[0], "png", out);
-                    System.out.println("✅ SUCCESS! Created: " + out.getAbsolutePath());
+                    showLuxuryToast("Exported " + out.getName(), out);
                     modal.close();
                 } catch (Exception ex) {
                     ex.printStackTrace();
@@ -951,10 +1081,10 @@ public class RadialConverterApp extends Application {
         BufferedImage out = new BufferedImage(totalW, totalH, BufferedImage.TYPE_INT_ARGB);
         Graphics2D g2 = out.createGraphics();
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        g2.setPaint(new GradientPaint(0, 0, new java.awt.Color(56, 189, 248), totalW, totalH, new java.awt.Color(99, 102, 241)));
+        g2.setPaint(new GradientPaint(0, 0, new java.awt.Color(18, 20, 28), totalW, totalH, new java.awt.Color(38, 32, 20)));
         g2.fillRect(0, 0, totalW, totalH);
-        g2.setColor(new java.awt.Color(0, 0, 0, 80));
-        g2.fillRoundRect(pad + 4, pad + 10, w, h, radius, radius);
+        g2.setColor(new java.awt.Color(0, 0, 0, 110));
+        g2.fillRoundRect(pad + 4, pad + 12, w, h, radius, radius);
 
         BufferedImage roundedFg = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
         Graphics2D gFg = roundedFg.createGraphics();
@@ -970,7 +1100,7 @@ public class RadialConverterApp extends Application {
     }
 
     // =========================================================
-    // 7. SUMMON MENU
+    // 8. SUMMON MENU & GLOBAL SHORTCUT
     // =========================================================
     public void summonRadialMenu() {
         Point cursor = MouseInfo.getPointerInfo().getLocation();
@@ -998,13 +1128,13 @@ public class RadialConverterApp extends Application {
                 radialStage.setX(targetX);
                 radialStage.setY(targetY);
 
-                wheelPane.setScaleX(0.82);
-                wheelPane.setScaleY(0.82);
+                wheelPane.setScaleX(0.84);
+                wheelPane.setScaleY(0.84);
                 radialStage.show();
                 radialStage.toFront();
                 radialStage.requestFocus();
 
-                ScaleTransition st = new ScaleTransition(Duration.millis(95), wheelPane);
+                ScaleTransition st = new ScaleTransition(Duration.millis(110), wheelPane);
                 st.setToX(1.0);
                 st.setToY(1.0);
                 st.play();
