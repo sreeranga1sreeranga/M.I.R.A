@@ -15,15 +15,19 @@ import javafx.geometry.Rectangle2D;
 import javafx.scene.Cursor;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
+import javafx.scene.effect.BoxBlur;
 import javafx.scene.effect.DropShadow;
 import javafx.scene.image.ImageView;
+import javafx.scene.image.WritableImage;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.TransferMode;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.paint.CycleMethod;
 import javafx.scene.paint.LinearGradient;
+import javafx.scene.paint.RadialGradient;
 import javafx.scene.paint.Stop;
+import javafx.scene.robot.Robot;
 import javafx.scene.shape.*;
 import javafx.scene.text.Font;
 import javafx.scene.text.FontWeight;
@@ -84,27 +88,26 @@ public class RadialConverterApp extends Application {
     private static final boolean IS_MAC = System.getProperty("os.name").toLowerCase().contains("mac");
     private static final String OS_FONT = IS_MAC ? "SF Pro Display" : "Segoe UI Variable";
 
-    // Minimalist Luxury Proportions
-    private static final double SIZE = 290;
-    private static final double OUTER_R = 114;
-    private static final double INNER_R = 46;
-    private static final double GAP_DEGREES = 3.2; // Architectural gap between slices
+    private static final double SIZE = 300;
+    private static final double OUTER_R = 118;
+    private static final double INNER_R = 48;
+    private static final double GAP_DEGREES = 3.6;
 
     private Stage radialStage;
     private Pane wheelPane;
+    private WritableImage blurredBackdropSnapshot = null;
     private boolean isToolsMode = false;
+    private boolean isOsDarkMode = true;
+    private Color osAccentColor = Color.rgb(56, 189, 248); // Dynamically synced with Mac/Windows theme
     private List<String> currentSlices = Arrays.asList("PNG", "JPG", "WEBP", "PDF");
     private int hoveredIndex = -1;
     private boolean centerHovered = false;
     private File activeFile = null;
 
-    // 3 Luxury Market Themes: 0 = Obsidian & Champagne Gold, 1 = Titanium Frost, 2 = Midnight Emerald
-    private int luxuryThemeIndex = 0;
-    private static final String[] THEME_NAMES = {"OBSIDIAN GOLD", "TITANIUM FROST", "MIDNIGHT EMERALD"};
-
     @Override
     public void start(Stage primaryStage) {
         Platform.setImplicitExit(false);
+        syncWithUserOsTheme();
 
         radialStage = new Stage(StageStyle.TRANSPARENT);
         radialStage.setAlwaysOnTop(true);
@@ -115,7 +118,8 @@ public class RadialConverterApp extends Application {
 
         DropShadow ambientShadow = new DropShadow();
         ambientShadow.setRadius(28);
-        ambientShadow.setColor(Color.rgb(0, 0, 0, 0.72));
+        ambientShadow.setOffsetY(6);
+        ambientShadow.setColor(Color.rgb(0, 0, 0, 0.58));
         wheelPane.setEffect(ambientShadow);
 
         Scene scene = new Scene(wheelPane, SIZE, SIZE, Color.TRANSPARENT);
@@ -132,14 +136,66 @@ public class RadialConverterApp extends Application {
         registerGlobalShortcutHook();
 
         System.out.println("==========================================================");
-        System.out.println("✨ M.I.R.A. Luxury Edition — 100% Offline Conversion Engine");
-        System.out.println("👉 Select ANY file and press COMMAND + E (Mac) / SHIFT + E (Win)");
-        System.out.println("🎨 Press TAB while the wheel is open to switch Luxury Themes!");
+        System.out.println("✨ M.I.R.A. Chameleon Luxury Edition — Active in Background");
+        System.out.println("🎨 Auto-Adaptive OS Theme + Real Frosted Backdrop Blur");
+        System.out.println("👉 Select ANY file in Finder/Explorer and press COMMAND + E");
         System.out.println("==========================================================");
     }
 
     // =========================================================
-    // 1. STRICT OFFLINE CONVERSION MAP (Crop Removed!)
+    // 1. REAL-TIME MAC & WINDOWS THEME + ACCENT COLOR DETECTOR
+    // =========================================================
+    private void syncWithUserOsTheme() {
+        try {
+            if (IS_MAC) {
+                // 1. Detect macOS Dark vs Light Mode
+                Process pDark = new ProcessBuilder("defaults", "read", "-g", "AppleInterfaceStyle").start();
+                try (BufferedReader r = new BufferedReader(new InputStreamReader(pDark.getInputStream()))) {
+                    String out = r.readLine();
+                    isOsDarkMode = (out != null && out.trim().equalsIgnoreCase("Dark"));
+                }
+
+                // 2. Detect macOS System Accent Color (Blue, Purple, Pink, Red, Orange, Yellow, Green, Graphite)
+                Process pAccent = new ProcessBuilder("defaults", "read", "-g", "AppleAccentColor").start();
+                try (BufferedReader r = new BufferedReader(new InputStreamReader(pAccent.getInputStream()))) {
+                    String val = r.readLine();
+                    int code = (val != null) ? Integer.parseInt(val.trim()) : 4;
+                    osAccentColor = switch (code) {
+                        case -1 -> Color.rgb(148, 163, 184); // Graphite / Monochrome Luxury
+                        case 0  -> Color.rgb(244, 63, 94);   // Crimson Red
+                        case 1  -> Color.rgb(249, 115, 22);  // Sunset Orange
+                        case 2  -> Color.rgb(234, 179, 8);   // Amber Gold
+                        case 3  -> Color.rgb(16, 185, 129);  // Emerald Green
+                        case 5  -> Color.rgb(168, 85, 247);  // Royal Purple
+                        case 6  -> Color.rgb(236, 72, 153);  // Rose Pink
+                        default -> Color.rgb(56, 189, 248);  // Default Ice Cyan / macOS Blue
+                    };
+                } catch (Exception e) {
+                    osAccentColor = Color.rgb(56, 189, 248);
+                }
+            } else {
+                // Windows 10/11 Dark Mode & Accent Detection via Registry
+                Process pWin = new ProcessBuilder("reg", "query",
+                        "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                        "/v", "AppsUseLightTheme").start();
+                try (BufferedReader r = new BufferedReader(new InputStreamReader(pWin.getInputStream()))) {
+                    String line;
+                    while ((line = r.readLine()) != null) {
+                        if (line.contains("AppsUseLightTheme")) {
+                            isOsDarkMode = line.trim().endsWith("0x0");
+                        }
+                    }
+                }
+                osAccentColor = Color.rgb(56, 189, 248);
+            }
+        } catch (Exception ignored) {
+            isOsDarkMode = true;
+            osAccentColor = Color.rgb(56, 189, 248);
+        }
+    }
+
+    // =========================================================
+    // 2. OFFLINE CONVERSION MATRIX (No Crop)
     // =========================================================
     private void updateSlicesForFile(File file) {
         if (file == null) {
@@ -162,7 +218,7 @@ public class RadialConverterApp extends Application {
             return;
         }
 
-        // 2. IMAGES (.jpg, .jpeg, .png, .heic, .webp, .bmp, .tiff) -> NO CROP!
+        // 2. IMAGES (.jpg, .jpeg, .png, .heic, .webp, .bmp, .tiff)
         if (Arrays.asList("jpg", "jpeg", "png", "heic", "webp", "bmp", "tiff").contains(ext)) {
             if (isToolsMode) {
                 currentSlices = Arrays.asList("ADD BG", "COMPRESS", "GRAYSCALE");
@@ -223,7 +279,7 @@ public class RadialConverterApp extends Application {
     }
 
     // =========================================================
-    // 2. MINIMALIST LUXURY RADIAL RENDERER (Separated Floating Arcs)
+    // 3. CHAMELEON FROSTED GLASS RENDERER (100% Legible Over Any Text!)
     // =========================================================
     private void drawRadialMenu() {
         wheelPane.getChildren().clear();
@@ -232,76 +288,69 @@ public class RadialConverterApp extends Application {
         int count = currentSlices.size();
         double step = 360.0 / count;
 
-        // Luxury Palette Selection
-        LinearGradient baseGrad;
-        LinearGradient hoverGrad;
-        Color strokeBase;
-        Color strokeHover;
-        Color textBase;
-        Color textHover;
-        Color accentColor;
+        // 1. REAL FROSTED BLUR LAYER: Blurs the Finder text underneath the circle!
+        if (blurredBackdropSnapshot != null) {
+            ImageView frostedBg = new ImageView(blurredBackdropSnapshot);
+            frostedBg.setFitWidth(SIZE);
+            frostedBg.setFitHeight(SIZE);
+            frostedBg.setEffect(new BoxBlur(22, 22, 3));
 
-        if (luxuryThemeIndex == 0) {
-            // Theme 0: OBSIDIAN & CHAMPAGNE GOLD (Luxury Watch / Bang & Olufsen Vibe)
-            baseGrad = new LinearGradient(0, 0, 0, 1, true, CycleMethod.NO_CYCLE,
-                    new Stop(0, Color.rgb(18, 19, 24, 0.94)),
-                    new Stop(1, Color.rgb(10, 11, 14, 0.97)));
-            hoverGrad = new LinearGradient(0, 0, 1, 1, true, CycleMethod.NO_CYCLE,
-                    new Stop(0, Color.rgb(212, 175, 55, 0.92)),
-                    new Stop(1, Color.rgb(170, 130, 30, 0.95)));
-            strokeBase = Color.rgb(212, 175, 55, 0.25);
-            strokeHover = Color.rgb(255, 235, 160, 0.95);
-            textBase = Color.rgb(235, 232, 225);
-            textHover = Color.rgb(12, 12, 14);
-            accentColor = Color.rgb(225, 190, 90);
-        } else if (luxuryThemeIndex == 1) {
-            // Theme 1: TITANIUM FROST (Minimalist Apple Vision / Teenage Engineering Vibe)
-            baseGrad = new LinearGradient(0, 0, 0, 1, true, CycleMethod.NO_CYCLE,
-                    new Stop(0, Color.rgb(248, 250, 252, 0.94)),
-                    new Stop(1, Color.rgb(226, 232, 240, 0.97)));
-            hoverGrad = new LinearGradient(0, 0, 1, 1, true, CycleMethod.NO_CYCLE,
-                    new Stop(0, Color.rgb(15, 23, 42, 0.96)),
-                    new Stop(1, Color.rgb(30, 41, 59, 0.98)));
-            strokeBase = Color.rgb(148, 163, 184, 0.45);
-            strokeHover = Color.rgb(56, 189, 248, 0.90);
-            textBase = Color.rgb(15, 23, 42);
-            textHover = Color.rgb(248, 250, 252);
-            accentColor = Color.rgb(2, 132, 199);
-        } else {
-            // Theme 2: MIDNIGHT EMERALD & PLATINUM
-            baseGrad = new LinearGradient(0, 0, 0, 1, true, CycleMethod.NO_CYCLE,
-                    new Stop(0, Color.rgb(11, 24, 21, 0.94)),
-                    new Stop(1, Color.rgb(6, 15, 13, 0.97)));
-            hoverGrad = new LinearGradient(0, 0, 1, 1, true, CycleMethod.NO_CYCLE,
-                    new Stop(0, Color.rgb(16, 185, 129, 0.92)),
-                    new Stop(1, Color.rgb(5, 150, 105, 0.96)));
-            strokeBase = Color.rgb(167, 243, 208, 0.22);
-            strokeHover = Color.rgb(209, 250, 229, 0.95);
-            textBase = Color.rgb(236, 253, 245);
-            textHover = Color.rgb(6, 20, 16);
-            accentColor = Color.rgb(52, 211, 153);
+            // Clip the blurred desktop snapshot purely to the donut ring area
+            Circle outerClip = new Circle(cx, cy, OUTER_R + 6);
+            Circle innerHole = new Circle(cx, cy, INNER_R - 4);
+            javafx.scene.shape.Shape ringClip = javafx.scene.shape.Shape.subtract(outerClip, innerHole);
+            frostedBg.setClip(ringClip);
+            wheelPane.getChildren().add(frostedBg);
         }
 
-        // Subtle Outer Halo Ring
+        // 2. ADAPTIVE CHAMELEON GLASS PALETTE (Matches Dark/Light OS Theme + User's Accent Color)
+        LinearGradient sliceGlassBase = isOsDarkMode
+                ? new LinearGradient(0, 0, 1, 1, true, CycleMethod.NO_CYCLE,
+                        new Stop(0.0, Color.rgb(24, 30, 44, 0.88)),
+                        new Stop(0.5, Color.rgb(15, 20, 32, 0.90)),
+                        new Stop(1.0, osAccentColor.deriveColor(0, 0.65, 0.35, 0.88)))
+                : new LinearGradient(0, 0, 1, 1, true, CycleMethod.NO_CYCLE,
+                        new Stop(0.0, Color.rgb(252, 254, 255, 0.92)),
+                        new Stop(0.6, Color.rgb(238, 244, 250, 0.90)),
+                        new Stop(1.0, osAccentColor.deriveColor(0, 0.25, 1.0, 0.90)));
+
+        LinearGradient sliceGlassHover = new LinearGradient(0, 0, 1, 1, true, CycleMethod.NO_CYCLE,
+                new Stop(0.0, osAccentColor.deriveColor(0, 0.95, 1.05, 0.94)),
+                new Stop(1.0, osAccentColor.deriveColor(8, 1.0, 0.72, 0.96)));
+
+        Color rimBase = isOsDarkMode
+                ? Color.rgb(255, 255, 255, 0.38)
+                : Color.rgb(15, 23, 42, 0.22);
+        Color rimHover = Color.WHITE;
+
+        Color textNormal = isOsDarkMode ? Color.rgb(248, 250, 252) : Color.rgb(15, 23, 42);
+        Color textHovered = Color.WHITE;
+
+        // Outer Specular Luxury Bezel Ring
         Circle outerHalo = new Circle(cx, cy, OUTER_R + 7);
         outerHalo.setFill(Color.TRANSPARENT);
-        outerHalo.setStroke(strokeBase);
-        outerHalo.setStrokeWidth(0.8);
+        outerHalo.setStroke(osAccentColor.deriveColor(0, 0.8, 1.0, 0.45));
+        outerHalo.setStrokeWidth(1.2);
         wheelPane.getChildren().add(outerHalo);
 
         double actualGap = count > 1 ? GAP_DEGREES : 0;
 
         for (int i = 0; i < count; i++) {
             boolean isHovered = (i == hoveredIndex);
-            double rOut = isHovered ? OUTER_R + 3 : OUTER_R; // Subtle luxury expansion on hover
+            double rOut = isHovered ? OUTER_R + 5 : OUTER_R;
             double startAngle = 90 + (step / 2.0) - (i * step) - (actualGap / 2.0);
             double sweepAngle = -(step - actualGap);
 
             Path slice = createDonutSlice(cx, cy, INNER_R, rOut, startAngle, sweepAngle);
-            slice.setFill(isHovered ? hoverGrad : baseGrad);
-            slice.setStroke(isHovered ? strokeHover : strokeBase);
-            slice.setStrokeWidth(isHovered ? 1.4 : 0.9);
+            slice.setFill(isHovered ? sliceGlassHover : sliceGlassBase);
+            slice.setStroke(isHovered ? rimHover : rimBase);
+            slice.setStrokeWidth(isHovered ? 1.8 : 1.15);
             slice.setStrokeLineJoin(StrokeLineJoin.ROUND);
+
+            if (isHovered) {
+                DropShadow glow = new DropShadow(14, osAccentColor.deriveColor(0, 1, 1, 0.65));
+                slice.setEffect(glow);
+            }
 
             double midRad = Math.toRadians(90 - (i * step));
             double textR = (INNER_R + rOut) / 2.0;
@@ -309,20 +358,52 @@ public class RadialConverterApp extends Application {
             double ty = cy - textR * Math.sin(midRad);
 
             Text label = new Text(currentSlices.get(i));
-            label.setFont(Font.font(OS_FONT, FontWeight.BOLD, count > 6 ? 10.0 : 11.0));
-            label.setFill(isHovered ? textHover : textBase);
+            label.setFont(Font.font(OS_FONT, FontWeight.EXTRA_BOLD, count > 6 ? 10.5 : 11.5));
+            label.setFill(isHovered ? textHovered : textNormal);
             label.setMouseTransparent(true);
-            label.setX(tx - label.getLayoutBounds().getWidth() / 2);
+
+            double lw = label.getLayoutBounds().getWidth();
+            double lh = label.getLayoutBounds().getHeight();
+
+            // Subtle High-Contrast Pill Capsule behind each label so text NEVER blends into background
+            Rectangle pill = new Rectangle(
+                    tx - (lw / 2.0) - 8,
+                    ty - (lh / 2.0) - 2,
+                    lw + 16,
+                    lh + 4
+            );
+            pill.setArcWidth(12);
+            pill.setArcHeight(12);
+            pill.setMouseTransparent(true);
+            if (isHovered) {
+                pill.setFill(Color.rgb(0, 0, 0, 0.22));
+                pill.setStroke(Color.rgb(255, 255, 255, 0.40));
+                pill.setStrokeWidth(0.8);
+            } else {
+                pill.setFill(isOsDarkMode ? Color.rgb(0, 0, 0, 0.35) : Color.rgb(255, 255, 255, 0.65));
+                pill.setStroke(isOsDarkMode ? Color.rgb(255, 255, 255, 0.16) : Color.rgb(15, 23, 42, 0.12));
+                pill.setStrokeWidth(0.7);
+            }
+
+            label.setX(tx - lw / 2.0);
             label.setY(ty + 4);
 
-            wheelPane.getChildren().addAll(slice, label);
+            wheelPane.getChildren().addAll(slice, pill, label);
         }
 
-        // Minimalist Luxury Center Medallion
+        // 3. CENTER LUXURY MEDALLION (Frosted Glass Orb with Accent Halo)
         Circle hub = new Circle(cx, cy, INNER_R - 4);
-        hub.setFill(centerHovered ? hoverGrad : baseGrad);
-        hub.setStroke(centerHovered ? strokeHover : accentColor);
-        hub.setStrokeWidth(1.3);
+        RadialGradient hubGrad = isOsDarkMode
+                ? new RadialGradient(0, 0, 0.35, 0.35, 0.85, true, CycleMethod.NO_CYCLE,
+                        new Stop(0, Color.rgb(34, 42, 60, 0.95)),
+                        new Stop(1, Color.rgb(12, 16, 26, 0.97)))
+                : new RadialGradient(0, 0, 0.35, 0.35, 0.85, true, CycleMethod.NO_CYCLE,
+                        new Stop(0, Color.rgb(255, 255, 255, 0.97)),
+                        new Stop(1, Color.rgb(226, 232, 240, 0.97)));
+
+        hub.setFill(centerHovered ? sliceGlassHover : hubGrad);
+        hub.setStroke(centerHovered ? Color.WHITE : osAccentColor);
+        hub.setStrokeWidth(1.8);
 
         String extBadge = "SELECT";
         if (activeFile != null) {
@@ -331,21 +412,21 @@ public class RadialConverterApp extends Application {
         }
 
         String topLine = centerHovered ? (isToolsMode ? "CONVERT" : "TOOLS") : extBadge;
-        String botLine = activeFile == null ? "Browse" : (isToolsMode ? "MODE" : "OPTIONS");
+        String botLine = activeFile == null ? "Browse" : (isToolsMode ? "MODE" : "CLICK:TOOLS");
 
         Text hubTitle = new Text(topLine);
-        hubTitle.setFont(Font.font(OS_FONT, FontWeight.EXTRA_BOLD, 10.5));
-        hubTitle.setFill(centerHovered ? textHover : accentColor);
+        hubTitle.setFont(Font.font(OS_FONT, FontWeight.EXTRA_BOLD, 11.5));
+        hubTitle.setFill(centerHovered ? Color.WHITE : osAccentColor.brighter());
         hubTitle.setMouseTransparent(true);
         hubTitle.setX(cx - hubTitle.getLayoutBounds().getWidth() / 2);
         hubTitle.setY(cy - 1);
 
         Text hubSub = new Text(botLine);
-        hubSub.setFont(Font.font(OS_FONT, FontWeight.MEDIUM, 7.5));
-        hubSub.setFill(centerHovered ? textHover : textBase.deriveColor(0, 1, 1, 0.65));
+        hubSub.setFont(Font.font(OS_FONT, FontWeight.BOLD, 7.5));
+        hubSub.setFill(centerHovered ? Color.WHITE : textNormal.deriveColor(0, 1, 1, 0.78));
         hubSub.setMouseTransparent(true);
         hubSub.setX(cx - hubSub.getLayoutBounds().getWidth() / 2);
-        hubSub.setY(cy + 10);
+        hubSub.setY(cy + 11);
 
         wheelPane.getChildren().addAll(hub, hubTitle, hubSub);
     }
@@ -364,7 +445,7 @@ public class RadialConverterApp extends Application {
     }
 
     // =========================================================
-    // 3. INTERACTIONS (Click, Hover, Tab to Cycle Luxury Themes)
+    // 4. INTERACTIONS
     // =========================================================
     private void setupInteractions(Scene scene) {
         scene.setCursor(Cursor.HAND);
@@ -390,7 +471,7 @@ public class RadialConverterApp extends Application {
                     updateSlicesForFile(activeFile);
                     drawRadialMenu();
                 }
-            } else if (dist <= OUTER_R + 4 && hoveredIndex >= 0 && hoveredIndex < currentSlices.size()) {
+            } else if (dist <= OUTER_R + 5 && hoveredIndex >= 0 && hoveredIndex < currentSlices.size()) {
                 String action = currentSlices.get(hoveredIndex);
                 File target = activeFile;
                 hoveredIndex = -1;
@@ -412,9 +493,6 @@ public class RadialConverterApp extends Application {
         scene.setOnKeyPressed(e -> {
             if (e.getCode() == KeyCode.ESCAPE) {
                 radialStage.hide();
-            } else if (e.getCode() == KeyCode.TAB) {
-                luxuryThemeIndex = (luxuryThemeIndex + 1) % THEME_NAMES.length;
-                drawRadialMenu();
             }
         });
 
@@ -450,7 +528,7 @@ public class RadialConverterApp extends Application {
                 hoveredIndex = -1;
                 drawRadialMenu();
             }
-        } else if (dist <= OUTER_R + 4) {
+        } else if (dist <= OUTER_R + 5) {
             centerHovered = false;
             int count = currentSlices.size();
             double step = 360.0 / count;
@@ -470,7 +548,7 @@ public class RadialConverterApp extends Application {
     }
 
     // =========================================================
-    // 4. FINDER / EXPLORER SELECTION DETECTOR
+    // 5. FINDER / EXPLORER SELECTION DETECTOR
     // =========================================================
     private File getCurrentlySelectedFileFromOS() {
         try {
@@ -513,8 +591,12 @@ public class RadialConverterApp extends Application {
     }
 
     // =========================================================
-    // 5. 100% OFFLINE UNIVERSAL CONVERSION ENGINE
+    // 6. 100% OFFLINE UNIVERSAL CONVERSION ENGINE
     // =========================================================
+    public void runHeadlessConversion(File file, String action) {
+        executeFileAction(file, action);
+    }
+
     private void executeFileAction(File file, String action) {
         try {
             System.out.println("⚙️ [OFFLINE ENGINE] Converting '" + file.getName() + "' -> " + action + "...");
@@ -673,7 +755,6 @@ public class RadialConverterApp extends Application {
                         }
                         Files.writeString(outputCreated.toPath(), text);
                     } else if (action.equals("DOCX")) {
-                        // 100% Offline Cross-Platform PDF -> DOCX via Apache POI XWPFDocument
                         String text = new PDFTextStripper().getText(doc);
                         outputCreated = new File(baseName + ".docx");
                         writeTextToDocx(text, outputCreated);
@@ -697,7 +778,7 @@ public class RadialConverterApp extends Application {
                 }
             }
 
-            // E. JSON FILES (.json -> CSV, XLSX, HTML, PDF, TXT)
+            // E. JSON FILES (.json)
             else if (ext.equals("json")) {
                 String rawJson = Files.readString(file.toPath());
                 List<List<String>> jsonTable = parseJsonToTable(rawJson);
@@ -773,7 +854,9 @@ public class RadialConverterApp extends Application {
 
             if (outputCreated != null && outputCreated.exists()) {
                 System.out.println("✅ OFFLINE CONVERSION COMPLETE: " + outputCreated.getAbsolutePath());
-                showLuxuryToast("Created " + outputCreated.getName(), outputCreated);
+                if (radialStage != null) {
+                    showGlossyToast("Created " + outputCreated.getName(), outputCreated);
+                }
                 if (IS_MAC) {
                     new ProcessBuilder("afplay", "/System/Library/Sounds/Glass.aiff").start();
                 }
@@ -784,7 +867,7 @@ public class RadialConverterApp extends Application {
     }
 
     // =========================================================
-    // 6. OFFLINE PARSERS & WRITERS (XLSX, DOCX, JSON, HTML, PDF)
+    // 7. OFFLINE PARSERS & WRITERS
     // =========================================================
     private BufferedImage readImageWithMacFallback(File file) throws Exception {
         BufferedImage img = ImageIO.read(file);
@@ -869,7 +952,7 @@ public class RadialConverterApp extends Application {
                 + "body{font-family:-apple-system,sans-serif;padding:28px;background:#0f172a;color:#f8fafc;}"
                 + "table{border-collapse:collapse;width:100%;background:#1e293b;border-radius:8px;overflow:hidden;}"
                 + "th,td{border:1px solid #334155;padding:10px 14px;text-align:left;font-size:13px;}"
-                + "th{background:#090a0f;color:#e1be5a;text-transform:uppercase;letter-spacing:0.05em;}</style></head><body><table>\n");
+                + "th{background:#0284c7;color:#ffffff;text-transform:uppercase;letter-spacing:0.05em;}</style></head><body><table>\n");
         for (int i = 0; i < table.size(); i++) {
             html.append("<tr>");
             for (String cell : table.get(i)) {
@@ -985,26 +1068,26 @@ public class RadialConverterApp extends Application {
     }
 
     // =========================================================
-    // 7. LUXURY TOAST BANNER & ADD BG STUDIO
+    // 8. GLOSSY TOAST BANNER & ADD BG STUDIO
     // =========================================================
-    private void showLuxuryToast(String title, File createdFile) {
+    private void showGlossyToast(String title, File createdFile) {
         Platform.runLater(() -> {
             Stage toast = new Stage(StageStyle.TRANSPARENT);
             toast.setAlwaysOnTop(true);
 
             HBox banner = new HBox(14);
             banner.setAlignment(Pos.CENTER_LEFT);
-            banner.setStyle("-fx-background-color: rgba(10, 11, 14, 0.95); -fx-padding: 12 18; "
-                    + "-fx-background-radius: 14; -fx-border-color: rgba(212, 175, 55, 0.55); -fx-border-radius: 14;");
+            banner.setStyle("-fx-background-color: rgba(15, 23, 42, 0.92); -fx-padding: 12 18; "
+                    + "-fx-background-radius: 16; -fx-border-color: rgba(255, 255, 255, 0.45); -fx-border-radius: 16;");
 
             Label lbl = new Label("✦  " + title);
             lbl.setFont(Font.font(OS_FONT, FontWeight.BOLD, 12));
-            lbl.setTextFill(Color.rgb(235, 232, 225));
+            lbl.setTextFill(Color.WHITE);
             banner.getChildren().add(lbl);
 
             if (createdFile != null && createdFile.exists()) {
                 Button revealBtn = new Button("Reveal");
-                revealBtn.setStyle("-fx-background-color: #D4AF37; -fx-text-fill: #090A0F; -fx-font-weight: bold; -fx-background-radius: 8; -fx-padding: 4 12;");
+                revealBtn.setStyle("-fx-background-color: #38BDF8; -fx-text-fill: #0F172A; -fx-font-weight: bold; -fx-background-radius: 8; -fx-padding: 4 12;");
                 revealBtn.setOnAction(e -> {
                     try {
                         if (IS_MAC) {
@@ -1034,10 +1117,10 @@ public class RadialConverterApp extends Application {
             BufferedImage orig = readImageWithMacFallback(file);
             if (orig == null) return;
             Stage modal = new Stage();
-            modal.setTitle("M.I.R.A. Studio — Luxury Frame");
+            modal.setTitle("M.I.R.A. Studio — Glossy Frame");
             VBox root = new VBox(14);
             root.setAlignment(Pos.CENTER);
-            root.setStyle("-fx-background-color: #090A0F; -fx-padding: 24;");
+            root.setStyle("-fx-background-color: #0F172A; -fx-padding: 24;");
             ImageView previewView = new ImageView();
             previewView.setFitWidth(380);
             previewView.setFitHeight(250);
@@ -1055,13 +1138,13 @@ public class RadialConverterApp extends Application {
             update.run();
 
             Button saveBtn = new Button("Export Framed Image");
-            saveBtn.setStyle("-fx-background-color: #D4AF37; -fx-text-fill: #090A0F; -fx-background-radius: 8; -fx-padding: 8 22; -fx-font-weight: bold;");
+            saveBtn.setStyle("-fx-background-color: #38BDF8; -fx-text-fill: #0F172A; -fx-background-radius: 8; -fx-padding: 8 22; -fx-font-weight: bold;");
             saveBtn.setOnAction(e -> {
                 try {
                     String path = file.getAbsolutePath();
                     File out = new File(path.substring(0, path.lastIndexOf('.')) + "_Framed.png");
                     ImageIO.write(latestRender[0], "png", out);
-                    showLuxuryToast("Exported " + out.getName(), out);
+                    showGlossyToast("Exported " + out.getName(), out);
                     modal.close();
                 } catch (Exception ex) {
                     ex.printStackTrace();
@@ -1081,9 +1164,9 @@ public class RadialConverterApp extends Application {
         BufferedImage out = new BufferedImage(totalW, totalH, BufferedImage.TYPE_INT_ARGB);
         Graphics2D g2 = out.createGraphics();
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        g2.setPaint(new GradientPaint(0, 0, new java.awt.Color(18, 20, 28), totalW, totalH, new java.awt.Color(38, 32, 20)));
+        g2.setPaint(new GradientPaint(0, 0, new java.awt.Color(56, 189, 248), totalW, totalH, new java.awt.Color(37, 99, 235)));
         g2.fillRect(0, 0, totalW, totalH);
-        g2.setColor(new java.awt.Color(0, 0, 0, 110));
+        g2.setColor(new java.awt.Color(0, 0, 0, 100));
         g2.fillRoundRect(pad + 4, pad + 12, w, h, radius, radius);
 
         BufferedImage roundedFg = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
@@ -1100,12 +1183,14 @@ public class RadialConverterApp extends Application {
     }
 
     // =========================================================
-    // 8. SUMMON MENU & GLOBAL SHORTCUT
+    // 9. SUMMON MENU (WITH LIVE FROSTED BACKDROP CAPTURE)
     // =========================================================
     public void summonRadialMenu() {
         Point cursor = MouseInfo.getPointerInfo().getLocation();
 
         CompletableFuture.runAsync(() -> {
+            // Re-sync with the user's current Mac/Windows Dark/Light mode and Accent Color
+            syncWithUserOsTheme();
             File selected = getCurrentlySelectedFileFromOS();
 
             Platform.runLater(() -> {
@@ -1114,16 +1199,24 @@ public class RadialConverterApp extends Application {
                     return;
                 }
 
+                Rectangle2D bounds = Screen.getPrimary().getVisualBounds();
+                double targetX = Math.max(bounds.getMinX() + 8, Math.min(cursor.x - SIZE / 2.0, bounds.getMaxX() - SIZE - 8));
+                double targetY = Math.max(bounds.getMinY() + 8, Math.min(cursor.y - SIZE / 2.0, bounds.getMaxY() - SIZE - 8));
+
+                // Capture the exact screen region behind the wheel to create a true frosted blur!
+                try {
+                    Robot robot = new Robot();
+                    blurredBackdropSnapshot = robot.getScreenCapture(null, new Rectangle2D(targetX, targetY, SIZE, SIZE));
+                } catch (Exception ignored) {
+                    blurredBackdropSnapshot = null;
+                }
+
                 activeFile = selected;
                 isToolsMode = false;
                 hoveredIndex = -1;
                 centerHovered = false;
                 updateSlicesForFile(activeFile);
                 drawRadialMenu();
-
-                Rectangle2D bounds = Screen.getPrimary().getVisualBounds();
-                double targetX = Math.max(bounds.getMinX() + 8, Math.min(cursor.x - SIZE / 2.0, bounds.getMaxX() - SIZE - 8));
-                double targetY = Math.max(bounds.getMinY() + 8, Math.min(cursor.y - SIZE / 2.0, bounds.getMaxY() - SIZE - 8));
 
                 radialStage.setX(targetX);
                 radialStage.setY(targetY);
@@ -1179,6 +1272,9 @@ public class RadialConverterApp extends Application {
     }
 
     public static void main(String[] args) {
+        if (IS_MAC) {
+            System.setProperty("apple.awt.UIElement", "true");
+        }
         launch(args);
     }
 }
