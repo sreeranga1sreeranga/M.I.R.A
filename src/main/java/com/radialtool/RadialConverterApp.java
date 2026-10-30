@@ -1,5 +1,7 @@
 package com.radialtool;
 
+import java.util.List;
+
 import com.github.kwhat.jnativehook.GlobalScreen;
 import com.github.kwhat.jnativehook.keyboard.NativeKeyEvent;
 import com.github.kwhat.jnativehook.keyboard.NativeKeyListener;
@@ -39,9 +41,11 @@ import javafx.stage.StageStyle;
 import javafx.util.Duration;
 
 import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.multipdf.PDFMergerUtility;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.font.PDFont;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
 import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
 import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
@@ -65,7 +69,12 @@ import java.awt.GradientPaint;
 import java.awt.Graphics2D;
 import java.awt.MouseInfo;
 import java.awt.Point;
+import java.awt.PopupMenu;
 import java.awt.RenderingHints;
+import java.awt.SystemTray;
+import java.awt.Toolkit;
+import java.awt.TrayIcon;
+import java.awt.datatransfer.StringSelection;
 import java.awt.geom.Rectangle2D.Double;
 import java.awt.geom.RoundRectangle2D;
 import java.awt.image.BufferedImage;
@@ -82,32 +91,39 @@ import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 public class RadialConverterApp extends Application {
 
     private static final boolean IS_MAC = System.getProperty("os.name").toLowerCase().contains("mac");
     private static final String OS_FONT = IS_MAC ? "SF Pro Display" : "Segoe UI Variable";
 
-    private static final double SIZE = 300;
-    private static final double OUTER_R = 118;
-    private static final double INNER_R = 48;
+    private static final double SIZE = 310;
+    private static final double OUTER_R = 122;
+    private static final double INNER_R = 50;
     private static final double GAP_DEGREES = 3.6;
 
     private Stage radialStage;
     private Pane wheelPane;
     private WritableImage blurredBackdropSnapshot = null;
+
     private boolean isToolsMode = false;
+    private boolean shortcutPaused = false;
     private boolean isOsDarkMode = true;
-    private Color osAccentColor = Color.rgb(56, 189, 248); // Dynamically synced with Mac/Windows theme
+    private Color osAccentColor = Color.rgb(56, 189, 248);
+    private int themeMode = 0; // 0=Auto OS, 1=Obsidian Gold, 2=Frosted Pearl, 3=Midnight Emerald
+
     private List<String> currentSlices = Arrays.asList("PNG", "JPG", "WEBP", "PDF");
     private int hoveredIndex = -1;
     private boolean centerHovered = false;
-    private File activeFile = null;
+    private List<File> activeFiles = new ArrayList<>();
 
     @Override
     public void start(Stage primaryStage) {
         Platform.setImplicitExit(false);
         syncWithUserOsTheme();
+        setupSystemTrayController();
 
         radialStage = new Stage(StageStyle.TRANSPARENT);
         radialStage.setAlwaysOnTop(true);
@@ -136,45 +152,101 @@ public class RadialConverterApp extends Application {
         registerGlobalShortcutHook();
 
         System.out.println("==========================================================");
-        System.out.println("✨ M.I.R.A. Chameleon Luxury Edition — Active in Background");
-        System.out.println("🎨 Auto-Adaptive OS Theme + Real Frosted Backdrop Blur");
-        System.out.println("👉 Select ANY file in Finder/Explorer and press COMMAND + E");
+        System.out.println("✨ M.I.R.A. v2.0 Pro — Active in Background & Menu Bar");
+        System.out.println("📦 Multi-File Batch + PDF Merge + Word-Wrap + Hotkeys (1-7)");
+        System.out.println("👉 Select 1 or MORE files in Finder/Explorer & press CMD + E");
         System.out.println("==========================================================");
     }
 
-    // =========================================================
-    // 1. REAL-TIME MAC & WINDOWS THEME + ACCENT COLOR DETECTOR
-    // =========================================================
+    private void setupSystemTrayController() {
+        if (!SystemTray.isSupported()) return;
+
+        java.awt.EventQueue.invokeLater(() -> {
+            try {
+                SystemTray tray = SystemTray.getSystemTray();
+                BufferedImage trayImg = new BufferedImage(22, 22, BufferedImage.TYPE_INT_ARGB);
+                Graphics2D g2 = trayImg.createGraphics();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(new java.awt.Color(56, 189, 248));
+                g2.setStroke(new java.awt.BasicStroke(2.2f));
+                g2.drawOval(3, 3, 15, 15);
+                g2.setColor(java.awt.Color.WHITE);
+                g2.fillOval(8, 8, 5, 5);
+                g2.dispose();
+
+                PopupMenu popup = new PopupMenu();
+                java.awt.MenuItem summonItem = new java.awt.MenuItem("Summon M.I.R.A. Wheel (Cmd+E)");
+                summonItem.addActionListener(e -> summonRadialMenu());
+
+                java.awt.Menu themeMenu = new java.awt.Menu("Luxury Theme");
+                String[] themeNames = {
+                        "Auto (OS Chameleon Sync)",
+                        "Obsidian & Champagne Gold",
+                        "Frosted Pearl Alabaster",
+                        "Midnight Emerald"
+                };
+                for (int i = 0; i < themeNames.length; i++) {
+                    final int idx = i;
+                    java.awt.MenuItem tItem = new java.awt.MenuItem(themeNames[i]);
+                    tItem.addActionListener(e -> {
+                        themeMode = idx;
+                        Platform.runLater(this::drawRadialMenu);
+                    });
+                    themeMenu.add(tItem);
+                }
+
+                java.awt.CheckboxMenuItem pauseItem = new java.awt.CheckboxMenuItem("Pause Global Shortcut", false);
+                pauseItem.addItemListener(e -> shortcutPaused = pauseItem.getState());
+
+                java.awt.MenuItem quitItem = new java.awt.MenuItem("Quit M.I.R.A.");
+                quitItem.addActionListener(e -> {
+                    try { GlobalScreen.unregisterNativeHook(); } catch (Exception ignored) {}
+                    System.exit(0);
+                });
+
+                popup.add(summonItem);
+                popup.addSeparator();
+                popup.add(themeMenu);
+                popup.add(pauseItem);
+                popup.addSeparator();
+                popup.add(quitItem);
+
+                TrayIcon trayIcon = new TrayIcon(trayImg, "M.I.R.A. Offline Converter", popup);
+                trayIcon.setImageAutoSize(true);
+                tray.add(trayIcon);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        });
+    }
+
     private void syncWithUserOsTheme() {
         try {
             if (IS_MAC) {
-                // 1. Detect macOS Dark vs Light Mode
                 Process pDark = new ProcessBuilder("defaults", "read", "-g", "AppleInterfaceStyle").start();
                 try (BufferedReader r = new BufferedReader(new InputStreamReader(pDark.getInputStream()))) {
                     String out = r.readLine();
                     isOsDarkMode = (out != null && out.trim().equalsIgnoreCase("Dark"));
                 }
 
-                // 2. Detect macOS System Accent Color (Blue, Purple, Pink, Red, Orange, Yellow, Green, Graphite)
                 Process pAccent = new ProcessBuilder("defaults", "read", "-g", "AppleAccentColor").start();
                 try (BufferedReader r = new BufferedReader(new InputStreamReader(pAccent.getInputStream()))) {
                     String val = r.readLine();
                     int code = (val != null) ? Integer.parseInt(val.trim()) : 4;
                     osAccentColor = switch (code) {
-                        case -1 -> Color.rgb(148, 163, 184); // Graphite / Monochrome Luxury
-                        case 0  -> Color.rgb(244, 63, 94);   // Crimson Red
-                        case 1  -> Color.rgb(249, 115, 22);  // Sunset Orange
-                        case 2  -> Color.rgb(234, 179, 8);   // Amber Gold
-                        case 3  -> Color.rgb(16, 185, 129);  // Emerald Green
-                        case 5  -> Color.rgb(168, 85, 247);  // Royal Purple
-                        case 6  -> Color.rgb(236, 72, 153);  // Rose Pink
-                        default -> Color.rgb(56, 189, 248);  // Default Ice Cyan / macOS Blue
+                        case -1 -> Color.rgb(148, 163, 184);
+                        case 0  -> Color.rgb(244, 63, 94);
+                        case 1  -> Color.rgb(249, 115, 22);
+                        case 2  -> Color.rgb(234, 179, 8);
+                        case 3  -> Color.rgb(16, 185, 129);
+                        case 5  -> Color.rgb(168, 85, 247);
+                        case 6  -> Color.rgb(236, 72, 153);
+                        default -> Color.rgb(56, 189, 248);
                     };
                 } catch (Exception e) {
                     osAccentColor = Color.rgb(56, 189, 248);
                 }
             } else {
-                // Windows 10/11 Dark Mode & Accent Detection via Registry
                 Process pWin = new ProcessBuilder("reg", "query",
                         "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
                         "/v", "AppsUseLightTheme").start();
@@ -194,22 +266,32 @@ public class RadialConverterApp extends Application {
         }
     }
 
-    // =========================================================
-    // 2. OFFLINE CONVERSION MATRIX (No Crop)
-    // =========================================================
-    private void updateSlicesForFile(File file) {
-        if (file == null) {
-            currentSlices = Arrays.asList("PICK FILE");
+    private void updateSlicesForFiles(List<File> files) {
+        if (files == null || files.isEmpty()) {
+            currentSlices = Arrays.asList("PICK FILES");
             return;
         }
 
-        String name = file.getName().toLowerCase();
-        String ext = name.contains(".") ? name.substring(name.lastIndexOf('.') + 1) : "";
+        if (files.size() > 1) {
+            boolean allPdf = files.stream().allMatch(f -> getExt(f).equals("pdf"));
+            boolean allImg = files.stream().allMatch(f -> Arrays.asList("jpg", "jpeg", "png", "heic", "webp", "bmp", "tiff").contains(getExt(f)));
 
-        // 1. SPREADSHEETS (.xlsx, .xls, .csv, .tsv)
+            if (allPdf) {
+                currentSlices = Arrays.asList("MERGE PDFS", "BATCH TXT", "BATCH PNG", "ZIP ARCHIVE");
+            } else if (allImg) {
+                currentSlices = Arrays.asList("COMBINE PDF", "BATCH PNG", "BATCH JPG", "BATCH WEBP", "STRIP EXIF", "ZIP ARCHIVE");
+            } else {
+                currentSlices = Arrays.asList("ZIP ARCHIVE", "BATCH PDF", "BATCH TXT");
+            }
+            return;
+        }
+
+        File file = files.get(0);
+        String ext = getExt(file);
+
         if (Arrays.asList("xlsx", "xls", "csv", "tsv").contains(ext)) {
             if (isToolsMode) {
-                currentSlices = Arrays.asList("SORT A-Z", "DEDUPE", "SUMMARY");
+                currentSlices = Arrays.asList("SORT A-Z", "DEDUPE", "SUMMARY", "COPY TXT");
             } else {
                 List<String> opts = Arrays.asList("JSON", "CSV", "XLSX", "HTML", "PDF", "TXT");
                 String filter = ext.equals("xls") ? "XLSX" : ext.toUpperCase();
@@ -218,10 +300,9 @@ public class RadialConverterApp extends Application {
             return;
         }
 
-        // 2. IMAGES (.jpg, .jpeg, .png, .heic, .webp, .bmp, .tiff)
         if (Arrays.asList("jpg", "jpeg", "png", "heic", "webp", "bmp", "tiff").contains(ext)) {
             if (isToolsMode) {
-                currentSlices = Arrays.asList("ADD BG", "COMPRESS", "GRAYSCALE");
+                currentSlices = Arrays.asList("ADD BG", "COMPRESS", "GRAYSCALE", "STRIP EXIF");
             } else {
                 List<String> allImg = IS_MAC
                         ? Arrays.asList("PNG", "JPG", "WEBP", "HEIC", "TIFF", "BMP", "PDF")
@@ -232,20 +313,18 @@ public class RadialConverterApp extends Application {
             return;
         }
 
-        // 3. PDF DOCUMENTS (.pdf)
         if (ext.equals("pdf")) {
             if (isToolsMode) {
-                currentSlices = Arrays.asList("SUMMARY", "ALL PAGES PNG");
+                currentSlices = Arrays.asList("SPLIT PAGES", "SUMMARY", "ALL PAGES PNG", "COPY TXT");
             } else {
                 currentSlices = Arrays.asList("DOCX", "TXT", "HTML", "JPG", "PNG");
             }
             return;
         }
 
-        // 4. WORD & TEXT DOCUMENTS (.docx, .doc, .rtf, .txt, .md)
         if (Arrays.asList("docx", "doc", "rtf", "txt", "md").contains(ext)) {
             if (isToolsMode) {
-                currentSlices = Arrays.asList("SUMMARY", "UPPERCASE", "CLEAN TXT");
+                currentSlices = Arrays.asList("SUMMARY", "UPPERCASE", "CLEAN TXT", "COPY TXT");
             } else {
                 List<String> opts = IS_MAC
                         ? Arrays.asList("PDF", "DOCX", "TXT", "HTML", "RTF")
@@ -255,32 +334,41 @@ public class RadialConverterApp extends Application {
             return;
         }
 
-        // 5. POWERPOINT PRESENTATIONS (.pptx, .ppt)
         if (Arrays.asList("pptx", "ppt").contains(ext)) {
             if (isToolsMode) {
-                currentSlices = Arrays.asList("EXTRACT TXT", "SLIDE 1 PNG");
+                currentSlices = Arrays.asList("EXTRACT TXT", "SLIDE 1 PNG", "COPY TXT");
             } else {
                 currentSlices = Arrays.asList("PDF", "PNG", "TXT", "HTML");
             }
             return;
         }
 
-        // 6. JSON & WEB FILES (.json, .html, .htm, .mhtml)
         if (ext.equals("json")) {
-            currentSlices = Arrays.asList("CSV", "XLSX", "HTML", "PDF", "TXT");
-            return;
-        }
-        if (Arrays.asList("html", "htm", "mhtml").contains(ext)) {
-            currentSlices = Arrays.asList("PDF", "DOCX", "TXT");
+            if (isToolsMode) {
+                currentSlices = Arrays.asList("SUMMARY", "BEAUTIFY", "MINIFY", "COPY TXT");
+            } else {
+                currentSlices = Arrays.asList("CSV", "XLSX", "HTML", "PDF", "TXT");
+            }
             return;
         }
 
-        currentSlices = Arrays.asList("PDF", "TXT");
+        if (Arrays.asList("html", "htm", "mhtml").contains(ext)) {
+            if (isToolsMode) {
+                currentSlices = Arrays.asList("SUMMARY", "CLEAN TXT", "COPY TXT");
+            } else {
+                currentSlices = Arrays.asList("PDF", "DOCX", "TXT");
+            }
+            return;
+        }
+
+        currentSlices = Arrays.asList("PDF", "TXT", "ZIP ARCHIVE");
     }
 
-    // =========================================================
-    // 3. CHAMELEON FROSTED GLASS RENDERER (100% Legible Over Any Text!)
-    // =========================================================
+    private String getExt(File f) {
+        String n = f.getName().toLowerCase();
+        return n.contains(".") ? n.substring(n.lastIndexOf('.') + 1) : "";
+    }
+
     private void drawRadialMenu() {
         wheelPane.getChildren().clear();
         double cx = SIZE / 2.0;
@@ -288,14 +376,12 @@ public class RadialConverterApp extends Application {
         int count = currentSlices.size();
         double step = 360.0 / count;
 
-        // 1. REAL FROSTED BLUR LAYER: Blurs the Finder text underneath the circle!
         if (blurredBackdropSnapshot != null) {
             ImageView frostedBg = new ImageView(blurredBackdropSnapshot);
             frostedBg.setFitWidth(SIZE);
             frostedBg.setFitHeight(SIZE);
             frostedBg.setEffect(new BoxBlur(22, 22, 3));
 
-            // Clip the blurred desktop snapshot purely to the donut ring area
             Circle outerClip = new Circle(cx, cy, OUTER_R + 6);
             Circle innerHole = new Circle(cx, cy, INNER_R - 4);
             javafx.scene.shape.Shape ringClip = javafx.scene.shape.Shape.subtract(outerClip, innerHole);
@@ -303,33 +389,35 @@ public class RadialConverterApp extends Application {
             wheelPane.getChildren().add(frostedBg);
         }
 
-        // 2. ADAPTIVE CHAMELEON GLASS PALETTE (Matches Dark/Light OS Theme + User's Accent Color)
-        LinearGradient sliceGlassBase = isOsDarkMode
+        boolean darkPalette = (themeMode == 0) ? isOsDarkMode : (themeMode != 2);
+        Color activeAccent = switch (themeMode) {
+            case 1 -> Color.rgb(212, 175, 55);
+            case 2 -> Color.rgb(2, 132, 199);
+            case 3 -> Color.rgb(16, 185, 129);
+            default -> osAccentColor;
+        };
+
+        LinearGradient sliceGlassBase = darkPalette
                 ? new LinearGradient(0, 0, 1, 1, true, CycleMethod.NO_CYCLE,
-                        new Stop(0.0, Color.rgb(24, 30, 44, 0.88)),
-                        new Stop(0.5, Color.rgb(15, 20, 32, 0.90)),
-                        new Stop(1.0, osAccentColor.deriveColor(0, 0.65, 0.35, 0.88)))
+                        new Stop(0.0, Color.rgb(22, 27, 40, 0.90)),
+                        new Stop(0.55, Color.rgb(14, 18, 28, 0.92)),
+                        new Stop(1.0, activeAccent.deriveColor(0, 0.65, 0.35, 0.90)))
                 : new LinearGradient(0, 0, 1, 1, true, CycleMethod.NO_CYCLE,
-                        new Stop(0.0, Color.rgb(252, 254, 255, 0.92)),
-                        new Stop(0.6, Color.rgb(238, 244, 250, 0.90)),
-                        new Stop(1.0, osAccentColor.deriveColor(0, 0.25, 1.0, 0.90)));
+                        new Stop(0.0, Color.rgb(252, 254, 255, 0.93)),
+                        new Stop(0.6, Color.rgb(238, 244, 250, 0.91)),
+                        new Stop(1.0, activeAccent.deriveColor(0, 0.25, 1.0, 0.91)));
 
         LinearGradient sliceGlassHover = new LinearGradient(0, 0, 1, 1, true, CycleMethod.NO_CYCLE,
-                new Stop(0.0, osAccentColor.deriveColor(0, 0.95, 1.05, 0.94)),
-                new Stop(1.0, osAccentColor.deriveColor(8, 1.0, 0.72, 0.96)));
+                new Stop(0.0, activeAccent.deriveColor(0, 0.95, 1.05, 0.95)),
+                new Stop(1.0, activeAccent.deriveColor(8, 1.0, 0.72, 0.97)));
 
-        Color rimBase = isOsDarkMode
-                ? Color.rgb(255, 255, 255, 0.38)
-                : Color.rgb(15, 23, 42, 0.22);
+        Color rimBase = darkPalette ? Color.rgb(255, 255, 255, 0.38) : Color.rgb(15, 23, 42, 0.24);
         Color rimHover = Color.WHITE;
+        Color textNormal = darkPalette ? Color.rgb(248, 250, 252) : Color.rgb(15, 23, 42);
 
-        Color textNormal = isOsDarkMode ? Color.rgb(248, 250, 252) : Color.rgb(15, 23, 42);
-        Color textHovered = Color.WHITE;
-
-        // Outer Specular Luxury Bezel Ring
         Circle outerHalo = new Circle(cx, cy, OUTER_R + 7);
         outerHalo.setFill(Color.TRANSPARENT);
-        outerHalo.setStroke(osAccentColor.deriveColor(0, 0.8, 1.0, 0.45));
+        outerHalo.setStroke(activeAccent.deriveColor(0, 0.8, 1.0, 0.48));
         outerHalo.setStrokeWidth(1.2);
         wheelPane.getChildren().add(outerHalo);
 
@@ -348,8 +436,7 @@ public class RadialConverterApp extends Application {
             slice.setStrokeLineJoin(StrokeLineJoin.ROUND);
 
             if (isHovered) {
-                DropShadow glow = new DropShadow(14, osAccentColor.deriveColor(0, 1, 1, 0.65));
-                slice.setEffect(glow);
+                slice.setEffect(new DropShadow(14, activeAccent.deriveColor(0, 1, 1, 0.65)));
             }
 
             double midRad = Math.toRadians(90 - (i * step));
@@ -358,14 +445,13 @@ public class RadialConverterApp extends Application {
             double ty = cy - textR * Math.sin(midRad);
 
             Text label = new Text(currentSlices.get(i));
-            label.setFont(Font.font(OS_FONT, FontWeight.EXTRA_BOLD, count > 6 ? 10.5 : 11.5));
-            label.setFill(isHovered ? textHovered : textNormal);
+            label.setFont(Font.font(OS_FONT, FontWeight.EXTRA_BOLD, count > 5 ? 10.0 : 11.0));
+            label.setFill(isHovered ? Color.WHITE : textNormal);
             label.setMouseTransparent(true);
 
             double lw = label.getLayoutBounds().getWidth();
             double lh = label.getLayoutBounds().getHeight();
 
-            // Subtle High-Contrast Pill Capsule behind each label so text NEVER blends into background
             Rectangle pill = new Rectangle(
                     tx - (lw / 2.0) - 8,
                     ty - (lh / 2.0) - 2,
@@ -376,12 +462,12 @@ public class RadialConverterApp extends Application {
             pill.setArcHeight(12);
             pill.setMouseTransparent(true);
             if (isHovered) {
-                pill.setFill(Color.rgb(0, 0, 0, 0.22));
-                pill.setStroke(Color.rgb(255, 255, 255, 0.40));
+                pill.setFill(Color.rgb(0, 0, 0, 0.26));
+                pill.setStroke(Color.rgb(255, 255, 255, 0.45));
                 pill.setStrokeWidth(0.8);
             } else {
-                pill.setFill(isOsDarkMode ? Color.rgb(0, 0, 0, 0.35) : Color.rgb(255, 255, 255, 0.65));
-                pill.setStroke(isOsDarkMode ? Color.rgb(255, 255, 255, 0.16) : Color.rgb(15, 23, 42, 0.12));
+                pill.setFill(darkPalette ? Color.rgb(0, 0, 0, 0.38) : Color.rgb(255, 255, 255, 0.68));
+                pill.setStroke(darkPalette ? Color.rgb(255, 255, 255, 0.16) : Color.rgb(15, 23, 42, 0.14));
                 pill.setStrokeWidth(0.7);
             }
 
@@ -391,38 +477,39 @@ public class RadialConverterApp extends Application {
             wheelPane.getChildren().addAll(slice, pill, label);
         }
 
-        // 3. CENTER LUXURY MEDALLION (Frosted Glass Orb with Accent Halo)
         Circle hub = new Circle(cx, cy, INNER_R - 4);
-        RadialGradient hubGrad = isOsDarkMode
+        RadialGradient hubGrad = darkPalette
                 ? new RadialGradient(0, 0, 0.35, 0.35, 0.85, true, CycleMethod.NO_CYCLE,
-                        new Stop(0, Color.rgb(34, 42, 60, 0.95)),
-                        new Stop(1, Color.rgb(12, 16, 26, 0.97)))
+                        new Stop(0, Color.rgb(34, 42, 60, 0.96)),
+                        new Stop(1, Color.rgb(12, 16, 26, 0.98)))
                 : new RadialGradient(0, 0, 0.35, 0.35, 0.85, true, CycleMethod.NO_CYCLE,
-                        new Stop(0, Color.rgb(255, 255, 255, 0.97)),
-                        new Stop(1, Color.rgb(226, 232, 240, 0.97)));
+                        new Stop(0, Color.rgb(255, 255, 255, 0.98)),
+                        new Stop(1, Color.rgb(226, 232, 240, 0.98)));
 
         hub.setFill(centerHovered ? sliceGlassHover : hubGrad);
-        hub.setStroke(centerHovered ? Color.WHITE : osAccentColor);
+        hub.setStroke(centerHovered ? Color.WHITE : activeAccent);
         hub.setStrokeWidth(1.8);
 
         String extBadge = "SELECT";
-        if (activeFile != null) {
-            String n = activeFile.getName();
-            extBadge = n.contains(".") ? n.substring(n.lastIndexOf('.') + 1).toUpperCase() : "FILE";
+        if (activeFiles.size() > 1) {
+            extBadge = activeFiles.size() + " FILES";
+        } else if (activeFiles.size() == 1) {
+            String ext = getExt(activeFiles.get(0));
+            extBadge = ext.isEmpty() ? "FILE" : ext.toUpperCase();
         }
 
         String topLine = centerHovered ? (isToolsMode ? "CONVERT" : "TOOLS") : extBadge;
-        String botLine = activeFile == null ? "Browse" : (isToolsMode ? "MODE" : "CLICK:TOOLS");
+        String botLine = activeFiles.isEmpty() ? "Browse" : (activeFiles.size() > 1 ? "BATCH MODE" : (isToolsMode ? "TOOLS" : "SPACE:TOOLS"));
 
         Text hubTitle = new Text(topLine);
         hubTitle.setFont(Font.font(OS_FONT, FontWeight.EXTRA_BOLD, 11.5));
-        hubTitle.setFill(centerHovered ? Color.WHITE : osAccentColor.brighter());
+        hubTitle.setFill(centerHovered ? Color.WHITE : (darkPalette ? activeAccent.brighter() : activeAccent.darker()));
         hubTitle.setMouseTransparent(true);
         hubTitle.setX(cx - hubTitle.getLayoutBounds().getWidth() / 2);
         hubTitle.setY(cy - 1);
 
         Text hubSub = new Text(botLine);
-        hubSub.setFont(Font.font(OS_FONT, FontWeight.BOLD, 7.5));
+        hubSub.setFont(Font.font(OS_FONT, FontWeight.BOLD, 7.2));
         hubSub.setFill(centerHovered ? Color.WHITE : textNormal.deriveColor(0, 1, 1, 0.78));
         hubSub.setMouseTransparent(true);
         hubSub.setX(cx - hubSub.getLayoutBounds().getWidth() / 2);
@@ -444,9 +531,6 @@ public class RadialConverterApp extends Application {
         return path;
     }
 
-    // =========================================================
-    // 4. INTERACTIONS
-    // =========================================================
     private void setupInteractions(Scene scene) {
         scene.setCursor(Cursor.HAND);
         scene.setOnMouseMoved(e -> updateHoverState(e.getX(), e.getY()));
@@ -455,44 +539,47 @@ public class RadialConverterApp extends Application {
             double dx = e.getX() - (SIZE / 2.0);
             double dy = e.getY() - (SIZE / 2.0);
             double dist = Math.hypot(dx, dy);
+            boolean altCopyMode = e.isAltDown();
 
             if (dist < INNER_R) {
-                if (activeFile == null) {
-                    FileChooser fc = new FileChooser();
-                    fc.setTitle("Select File for M.I.R.A.");
-                    File chosen = fc.showOpenDialog(radialStage);
-                    if (chosen != null) {
-                        activeFile = chosen;
-                        updateSlicesForFile(activeFile);
-                        drawRadialMenu();
-                    }
-                } else {
-                    isToolsMode = !isToolsMode;
-                    updateSlicesForFile(activeFile);
-                    drawRadialMenu();
-                }
+                handleCenterHubAction();
             } else if (dist <= OUTER_R + 5 && hoveredIndex >= 0 && hoveredIndex < currentSlices.size()) {
-                String action = currentSlices.get(hoveredIndex);
-                File target = activeFile;
-                hoveredIndex = -1;
-                isToolsMode = false;
-                radialStage.hide();
-
-                if (target != null) {
-                    if (action.equals("ADD BG")) {
-                        Platform.runLater(() -> showAddBgModal(target));
-                    } else {
-                        CompletableFuture.runAsync(() -> executeFileAction(target, action));
-                    }
-                }
+                triggerSliceIndex(hoveredIndex, altCopyMode);
             } else {
                 radialStage.hide();
             }
         });
 
         scene.setOnKeyPressed(e -> {
-            if (e.getCode() == KeyCode.ESCAPE) {
+            KeyCode code = e.getCode();
+            if (code == KeyCode.ESCAPE) {
                 radialStage.hide();
+            } else if (code == KeyCode.SPACE) {
+                handleCenterHubAction();
+            } else if (code == KeyCode.TAB) {
+                e.consume();
+                themeMode = (themeMode + 1) % 4;
+                drawRadialMenu();
+            } else if (code == KeyCode.RIGHT || code == KeyCode.DOWN) {
+                if (!currentSlices.isEmpty()) {
+                    hoveredIndex = (hoveredIndex + 1) % currentSlices.size();
+                    drawRadialMenu();
+                }
+            } else if (code == KeyCode.LEFT || code == KeyCode.UP) {
+                if (!currentSlices.isEmpty()) {
+                    hoveredIndex = (hoveredIndex - 1 + currentSlices.size()) % currentSlices.size();
+                    drawRadialMenu();
+                }
+            } else if (code == KeyCode.ENTER && hoveredIndex >= 0 && hoveredIndex < currentSlices.size()) {
+                triggerSliceIndex(hoveredIndex, e.isAltDown());
+            } else if (code.isDigitKey()) {
+                String name = code.getName();
+                if (!name.isEmpty() && Character.isDigit(name.charAt(name.length() - 1))) {
+                    int digit = name.charAt(name.length() - 1) - '1';
+                    if (digit >= 0 && digit < currentSlices.size()) {
+                        triggerSliceIndex(digit, e.isAltDown());
+                    }
+                }
             }
         });
 
@@ -505,16 +592,49 @@ public class RadialConverterApp extends Application {
 
         scene.setOnDragDropped(e -> {
             if (e.getDragboard().hasFiles()) {
-                activeFile = e.getDragboard().getFiles().get(0);
+                activeFiles = new ArrayList<>(e.getDragboard().getFiles());
                 if (hoveredIndex >= 0 && hoveredIndex < currentSlices.size()) {
-                    String action = currentSlices.get(hoveredIndex);
-                    File target = activeFile;
-                    radialStage.hide();
-                    CompletableFuture.runAsync(() -> executeFileAction(target, action));
+                    triggerSliceIndex(hoveredIndex, false);
                 }
             }
             e.setDropCompleted(true);
         });
+    }
+
+    private void handleCenterHubAction() {
+        if (activeFiles.isEmpty()) {
+            FileChooser fc = new FileChooser();
+            fc.setTitle("Select File(s) for M.I.R.A.");
+            List<File> chosen = fc.showOpenMultipleDialog(radialStage);
+            if (chosen != null && !chosen.isEmpty()) {
+                activeFiles = new ArrayList<>(chosen);
+                updateSlicesForFiles(activeFiles);
+                drawRadialMenu();
+            }
+        } else if (activeFiles.size() == 1) {
+            isToolsMode = !isToolsMode;
+            updateSlicesForFiles(activeFiles);
+            drawRadialMenu();
+        }
+    }
+
+    private void triggerSliceIndex(int index, boolean copyToClipboard) {
+        String action = currentSlices.get(index);
+        List<File> targets = new ArrayList<>(activeFiles);
+        hoveredIndex = -1;
+        isToolsMode = false;
+        radialStage.hide();
+
+        if (targets.isEmpty()) {
+            Platform.runLater(this::handleCenterHubAction);
+            return;
+        }
+
+        if (targets.size() == 1 && action.equals("ADD BG")) {
+            Platform.runLater(() -> showAddBgModal(targets.get(0)));
+        } else {
+            CompletableFuture.runAsync(() -> executeBatchOrSingleAction(targets, action, copyToClipboard));
+        }
     }
 
     private void updateHoverState(double mouseX, double mouseY) {
@@ -547,240 +667,398 @@ public class RadialConverterApp extends Application {
         }
     }
 
-    // =========================================================
-    // 5. FINDER / EXPLORER SELECTION DETECTOR
-    // =========================================================
-    private File getCurrentlySelectedFileFromOS() {
+    private List<File> getCurrentlySelectedFilesFromOS() {
+        List<File> results = new ArrayList<>();
         try {
             if (IS_MAC) {
                 String[] cmd = {
                         "osascript",
                         "-e", "tell application \"Finder\"",
-                        "-e", "set sel to selection",
-                        "-e", "if (count of sel) > 0 then",
-                        "-e", "return POSIX path of ((item 1 of sel) as text)",
-                        "-e", "end if",
+                        "-e", "set sel to selection as alias list",
+                        "-e", "set out to \"\"",
+                        "-e", "repeat with f in sel",
+                        "-e", "set out to out & (POSIX path of f) & linefeed",
+                        "-e", "end repeat",
+                        "-e", "return out",
                         "-e", "end tell"
                 };
                 Process p = new ProcessBuilder(cmd).start();
                 try (BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
-                    String path = reader.readLine();
-                    if (path != null && !path.isBlank()) {
-                        File f = new File(path.trim());
-                        if (f.exists()) return f;
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        if (!line.isBlank()) {
+                            File f = new File(line.trim());
+                            if (f.exists() && f.isFile()) results.add(f);
+                        }
                     }
                 }
             } else {
                 String psCommand = "$shell = New-Object -ComObject Shell.Application; " +
                         "foreach ($w in $shell.Windows()) { " +
                         "if ($w.Document.SelectedItems().Count -gt 0) { " +
-                        "$w.Document.SelectedItems().Item(0).Path; break } }";
+                        "foreach ($item in $w.Document.SelectedItems()) { $item.Path }; break } }";
                 Process p = new ProcessBuilder("powershell", "-NoProfile", "-Command", psCommand).start();
                 try (BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
-                    String path = reader.readLine();
-                    if (path != null && !path.isBlank()) {
-                        File f = new File(path.trim());
-                        if (f.exists()) return f;
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        if (!line.isBlank()) {
+                            File f = new File(line.trim());
+                            if (f.exists() && f.isFile()) results.add(f);
+                        }
                     }
                 }
             }
         } catch (Exception e) {
             e.printStackTrace();
         }
-        return null;
+        return results;
     }
 
-    // =========================================================
-    // 6. 100% OFFLINE UNIVERSAL CONVERSION ENGINE
-    // =========================================================
     public void runHeadlessConversion(File file, String action) {
-        executeFileAction(file, action);
+        executeBatchOrSingleAction(Collections.singletonList(file), action, false);
     }
 
-    private void executeFileAction(File file, String action) {
+    private void executeBatchOrSingleAction(List<File> files, String action, boolean copyToClipboard) {
         try {
-            System.out.println("⚙️ [OFFLINE ENGINE] Converting '" + file.getName() + "' -> " + action + "...");
-            String path = file.getAbsolutePath();
-            int dotIndex = path.lastIndexOf('.');
-            String baseName = (dotIndex > 0) ? path.substring(0, dotIndex) : path;
-            String ext = (dotIndex > 0) ? path.substring(dotIndex + 1).toLowerCase() : "";
-            String targetExt = action.toLowerCase();
-            File outputCreated = null;
+            if (files.isEmpty()) return;
+            File first = files.get(0);
+            File parentDir = first.getParentFile();
 
-            // A. SPREADSHEETS (.xlsx, .xls, .csv, .tsv)
-            if (Arrays.asList("xlsx", "xls", "csv", "tsv").contains(ext)) {
-                List<List<String>> table = readSpreadsheetToTable(file, ext);
-                if (table.isEmpty()) return;
-
-                if (action.equals("SORT A-Z") && table.size() > 1) {
-                    List<String> header = table.get(0);
-                    List<List<String>> body = table.subList(1, table.size()).stream()
-                            .sorted(Comparator.comparing(r -> r.isEmpty() ? "" : r.get(0)))
-                            .collect(Collectors.toList());
-                    body.add(0, header);
-                    outputCreated = new File(baseName + "_Sorted.csv");
-                    writeTableToCsv(body, outputCreated);
-                } else if (action.equals("DEDUPE")) {
-                    List<List<String>> deduped = new ArrayList<>(new LinkedHashSet<>(table));
-                    outputCreated = new File(baseName + "_Deduped.csv");
-                    writeTableToCsv(deduped, outputCreated);
-                } else if (action.equals("SUMMARY")) {
-                    outputCreated = new File(baseName + "_Summary.txt");
-                    String summary = "File: " + file.getName() + "\nTotal Rows: " + table.size()
-                            + "\nTotal Columns: " + (table.get(0).size())
-                            + "\nHeaders: " + String.join(", ", table.get(0));
-                    Files.writeString(outputCreated.toPath(), summary);
-                } else if (action.equals("CSV")) {
-                    outputCreated = new File(baseName + ".csv");
-                    writeTableToCsv(table, outputCreated);
-                } else if (action.equals("XLSX")) {
-                    outputCreated = new File(baseName + ".xlsx");
-                    writeTableToXlsx(table, outputCreated);
-                } else if (action.equals("TXT")) {
-                    String txt = table.stream().map(r -> String.join("\t", r)).collect(Collectors.joining("\n"));
-                    outputCreated = new File(baseName + ".txt");
-                    Files.writeString(outputCreated.toPath(), txt);
-                } else if (action.equals("HTML")) {
-                    outputCreated = new File(baseName + ".html");
-                    Files.writeString(outputCreated.toPath(), buildHtmlTable(table));
-                } else if (action.equals("JSON")) {
-                    List<String> headers = table.get(0);
-                    StringBuilder json = new StringBuilder("[\n");
-                    for (int i = 1; i < table.size(); i++) {
-                        List<String> row = table.get(i);
-                        json.append("  {");
-                        int cols = Math.max(headers.size(), row.size());
-                        for (int c = 0; c < cols; c++) {
-                            String key = c < headers.size() && !headers.get(c).isBlank() ? headers.get(c).trim() : "col_" + (c + 1);
-                            String val = c < row.size() ? row.get(c).trim() : "";
-                            json.append("\"").append(escapeJson(key)).append("\": \"").append(escapeJson(val)).append("\"");
-                            if (c < cols - 1) json.append(", ");
-                        }
-                        json.append("}").append(i < table.size() - 1 ? ",\n" : "\n");
-                    }
-                    json.append("]");
-                    outputCreated = new File(baseName + ".json");
-                    Files.writeString(outputCreated.toPath(), json.toString());
-                } else if (action.equals("PDF")) {
-                    String formatted = table.stream().map(r -> String.join("  |  ", r)).collect(Collectors.joining("\n"));
-                    outputCreated = new File(baseName + ".pdf");
-                    createSimplePdfFromText(formatted, outputCreated);
+            if (action.equals("MERGE PDFS")) {
+                List<File> pdfFiles = files.stream().filter(f -> getExt(f).equals("pdf")).toList();
+                if (pdfFiles.isEmpty()) return;
+                File mergedOut = new File(parentDir, "Merged_" + System.currentTimeMillis() + ".pdf");
+                PDFMergerUtility merger = new PDFMergerUtility();
+                merger.setDestinationFileName(mergedOut.getAbsolutePath());
+                for (File f : pdfFiles) {
+                    merger.addSource(f);
                 }
+                merger.mergeDocuments(org.apache.pdfbox.io.IOUtils.createMemoryOnlyStreamCache());
+                finishConversionNotification("Merged " + pdfFiles.size() + " PDFs", mergedOut);
+                return;
             }
 
-            // B. POWERPOINT (.pptx, .ppt)
-            else if (Arrays.asList("pptx", "ppt").contains(ext)) {
-                try (FileInputStream fis = new FileInputStream(file);
-                     XMLSlideShow ppt = new XMLSlideShow(fis)) {
-                    Dimension pgsize = ppt.getPageSize();
-                    List<XSLFSlide> slides = ppt.getSlides();
+            if (action.equals("COMBINE PDF")) {
+                File combinedPdf = new File(parentDir, "Combined_Images_" + System.currentTimeMillis() + ".pdf");
+                try (PDDocument doc = new PDDocument()) {
+                    int addedCount = 0;
+                    for (File imgFile : files) {
+                        BufferedImage img = readImageWithMacFallback(imgFile);
+                        if (img != null && img.getWidth() > 0 && img.getHeight() > 0) {
+                            PDPage page = new PDPage();
+                            doc.addPage(page);
+                            PDImageXObject pdImage = LosslessFactoryBridge.fromBufferedImage(doc, img);
+                            try (PDPageContentStream cs = new PDPageContentStream(doc, page)) {
+                                float scale = Math.min(520f / img.getWidth(), 720f / img.getHeight());
+                                float drawW = img.getWidth() * scale;
+                                float drawH = img.getHeight() * scale;
+                                cs.drawImage(pdImage, (612 - drawW) / 2f, (792 - drawH) / 2f, drawW, drawH);
+                            }
+                            addedCount++;
+                        }
+                    }
+                    if (addedCount > 0) {
+                        doc.save(combinedPdf);
+                        finishConversionNotification("Combined " + addedCount + " Images -> PDF", combinedPdf);
+                    }
+                }
+                return;
+            }
 
-                    if (action.equals("TXT") || action.equals("EXTRACT TXT") || action.equals("HTML")) {
-                        StringBuilder sb = new StringBuilder();
-                        int sNum = 1;
+            if (action.equals("ZIP ARCHIVE")) {
+                File zipOut = new File(parentDir, (files.size() == 1 ? stripExt(first.getName()) : "MIRA_Archive") + ".zip");
+                try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(zipOut))) {
+                    Set<String> seenNames = new HashSet<>();
+                    for (File f : files) {
+                        String entryName = f.getName();
+                        int dup = 1;
+                        while (seenNames.contains(entryName)) {
+                            int dot = f.getName().lastIndexOf('.');
+                            if (dot > 0) {
+                                entryName = f.getName().substring(0, dot) + "_" + dup + f.getName().substring(dot);
+                            } else {
+                                entryName = f.getName() + "_" + dup;
+                            }
+                            dup++;
+                        }
+                        seenNames.add(entryName);
+                        zos.putNextEntry(new ZipEntry(entryName));
+                        Files.copy(f.toPath(), zos);
+                        zos.closeEntry();
+                    }
+                }
+                finishConversionNotification("Archived " + files.size() + " file(s)", zipOut);
+                return;
+            }
+
+            String normalizedAction = action.startsWith("BATCH ") ? action.substring(6).trim() : action;
+            File lastOutput = null;
+            for (File f : files) {
+                lastOutput = executeSingleFileAction(f, normalizedAction, copyToClipboard);
+            }
+
+            if (lastOutput != null && lastOutput.exists()) {
+                String msg = files.size() > 1
+                        ? "Batch converted " + files.size() + " files -> " + normalizedAction
+                        : "Created " + lastOutput.getName();
+                finishConversionNotification(msg, lastOutput);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private File executeSingleFileAction(File file, String action, boolean copyToClipboard) throws Exception {
+        String path = file.getAbsolutePath();
+        int dotIndex = path.lastIndexOf('.');
+        String baseName = (dotIndex > 0) ? path.substring(0, dotIndex) : path;
+        String ext = getExt(file);
+        String targetExt = action.toLowerCase();
+        File outputCreated = null;
+
+        if (Arrays.asList("xlsx", "xls", "csv", "tsv").contains(ext)) {
+            List<List<String>> table = readSpreadsheetToTable(file, ext);
+            if (table.isEmpty()) return null;
+
+            if (action.equals("COPY TXT")) {
+                String txt = table.stream().map(r -> String.join("\t", r)).collect(Collectors.joining("\n"));
+                copyStringToSystemClipboard(txt);
+                showGlossyToast("Copied Spreadsheet Text to Clipboard!", null);
+                return null;
+            } else if (action.equals("SORT A-Z") && table.size() > 1) {
+                List<String> header = table.get(0);
+                List<List<String>> body = table.subList(1, table.size()).stream()
+                        .sorted(Comparator.comparing(r -> r.isEmpty() ? "" : r.get(0)))
+                        .collect(Collectors.toList());
+                body.add(0, header);
+                outputCreated = new File(baseName + "_Sorted.csv");
+                writeTableToCsv(body, outputCreated);
+            } else if (action.equals("DEDUPE")) {
+                List<List<String>> deduped = new ArrayList<>(new LinkedHashSet<>(table));
+                outputCreated = new File(baseName + "_Deduped.csv");
+                writeTableToCsv(deduped, outputCreated);
+            } else if (action.equals("SUMMARY")) {
+                outputCreated = new File(baseName + "_Summary.txt");
+                String summary = "File: " + file.getName() + "\nTotal Rows: " + table.size()
+                        + "\nTotal Columns: " + (table.get(0).size())
+                        + "\nHeaders: " + String.join(", ", table.get(0));
+                Files.writeString(outputCreated.toPath(), summary);
+                copyStringToSystemClipboard(summary);
+            } else if (action.equals("CSV")) {
+                outputCreated = new File(baseName + ".csv");
+                writeTableToCsv(table, outputCreated);
+            } else if (action.equals("XLSX")) {
+                outputCreated = new File(baseName + ".xlsx");
+                writeTableToXlsx(table, outputCreated);
+            } else if (action.equals("TXT")) {
+                String txt = table.stream().map(r -> String.join("\t", r)).collect(Collectors.joining("\n"));
+                outputCreated = new File(baseName + ".txt");
+                Files.writeString(outputCreated.toPath(), txt);
+                if (copyToClipboard) copyStringToSystemClipboard(txt);
+            } else if (action.equals("HTML")) {
+                outputCreated = new File(baseName + ".html");
+                Files.writeString(outputCreated.toPath(), buildHtmlTable(table));
+            } else if (action.equals("JSON")) {
+                List<String> headers = table.get(0);
+                StringBuilder json = new StringBuilder("[\n");
+                for (int i = 1; i < table.size(); i++) {
+                    List<String> row = table.get(i);
+                    json.append("  {");
+                    int cols = Math.max(headers.size(), row.size());
+                    for (int c = 0; c < cols; c++) {
+                        String key = c < headers.size() && !headers.get(c).isBlank() ? headers.get(c).trim() : "col_" + (c + 1);
+                        String val = c < row.size() ? row.get(c).trim() : "";
+                        json.append("\"").append(escapeJson(key)).append("\": \"").append(escapeJson(val)).append("\"");
+                        if (c < cols - 1) json.append(", ");
+                    }
+                    json.append("}").append(i < table.size() - 1 ? ",\n" : "\n");
+                }
+                json.append("]");
+                outputCreated = new File(baseName + ".json");
+                Files.writeString(outputCreated.toPath(), json.toString());
+                if (copyToClipboard) copyStringToSystemClipboard(json.toString());
+            } else if (action.equals("PDF")) {
+                String formatted = table.stream().map(r -> String.join("  |  ", r)).collect(Collectors.joining("\n"));
+                outputCreated = new File(baseName + ".pdf");
+                createWordWrappedPdfFromText(formatted, outputCreated);
+            }
+        } else if (Arrays.asList("pptx", "ppt").contains(ext)) {
+            try (FileInputStream fis = new FileInputStream(file);
+                 XMLSlideShow ppt = new XMLSlideShow(fis)) {
+                Dimension pgsize = ppt.getPageSize();
+                List<XSLFSlide> slides = ppt.getSlides();
+
+                if (action.equals("TXT") || action.equals("EXTRACT TXT") || action.equals("HTML") || action.equals("COPY TXT")) {
+                    StringBuilder sb = new StringBuilder();
+                    int sNum = 1;
+                    for (XSLFSlide slide : slides) {
+                        sb.append("--- Slide ").append(sNum++).append(" ---\n");
+                        for (XSLFShape shape : slide.getShapes()) {
+                            if (shape instanceof XSLFTextShape ts) sb.append(ts.getText()).append("\n");
+                        }
+                        sb.append("\n");
+                    }
+                    copyStringToSystemClipboard(sb.toString());
+                    if (action.equals("COPY TXT")) {
+                        showGlossyToast("Copied Slides Text to Clipboard!", null);
+                        return null;
+                    }
+                    String outExt = action.equals("HTML") ? "html" : "txt";
+                    outputCreated = new File(baseName + "." + outExt);
+                    Files.writeString(outputCreated.toPath(), sb.toString());
+                } else if (action.equals("PNG") || action.equals("SLIDE 1 PNG")) {
+                    if (!slides.isEmpty()) {
+                        BufferedImage img = renderSlide(slides.get(0), pgsize);
+                        outputCreated = new File(baseName + "_Slide1.png");
+                        ImageIO.write(img, "png", outputCreated);
+                    }
+                } else if (action.equals("PDF")) {
+                    outputCreated = new File(baseName + ".pdf");
+                    try (PDDocument pdfDoc = new PDDocument()) {
                         for (XSLFSlide slide : slides) {
-                            sb.append("--- Slide ").append(sNum++).append(" ---\n");
-                            for (XSLFShape shape : slide.getShapes()) {
-                                if (shape instanceof XSLFTextShape ts) {
-                                    sb.append(ts.getText()).append("\n");
-                                }
+                            BufferedImage img = renderSlide(slide, pgsize);
+                            PDPage page = new PDPage(new org.apache.pdfbox.pdmodel.common.PDRectangle(pgsize.width, pgsize.height));
+                            pdfDoc.addPage(page);
+                            PDImageXObject pdImg = LosslessFactoryBridge.fromBufferedImage(pdfDoc, img);
+                            try (PDPageContentStream cs = new PDPageContentStream(pdfDoc, page)) {
+                                cs.drawImage(pdImg, 0, 0, pgsize.width, pgsize.height);
                             }
-                            sb.append("\n");
                         }
-                        String outExt = action.equals("HTML") ? "html" : "txt";
-                        outputCreated = new File(baseName + "." + outExt);
-                        Files.writeString(outputCreated.toPath(), sb.toString());
-                    } else if (action.equals("PNG") || action.equals("SLIDE 1 PNG")) {
-                        if (!slides.isEmpty()) {
-                            BufferedImage img = renderSlide(slides.get(0), pgsize);
-                            outputCreated = new File(baseName + "_Slide1.png");
-                            ImageIO.write(img, "png", outputCreated);
-                        }
-                    } else if (action.equals("PDF")) {
-                        outputCreated = new File(baseName + ".pdf");
-                        try (PDDocument pdfDoc = new PDDocument()) {
-                            for (XSLFSlide slide : slides) {
-                                BufferedImage img = renderSlide(slide, pgsize);
-                                PDPage page = new PDPage(new org.apache.pdfbox.pdmodel.common.PDRectangle(pgsize.width, pgsize.height));
-                                pdfDoc.addPage(page);
-                                PDImageXObject pdImg = LosslessFactoryBridge.fromBufferedImage(pdfDoc, img);
-                                try (PDPageContentStream cs = new PDPageContentStream(pdfDoc, page)) {
-                                    cs.drawImage(pdImg, 0, 0, pgsize.width, pgsize.height);
-                                }
-                            }
-                            pdfDoc.save(outputCreated);
-                        }
+                        pdfDoc.save(outputCreated);
                     }
                 }
             }
-
-            // C. WORD DOCS, HTML & MHTML (.docx, .doc, .rtf, .txt, .md, .html, .mhtml)
-            else if (Arrays.asList("docx", "doc", "rtf", "txt", "md", "html", "htm", "mhtml").contains(ext)) {
-                String extractedText = extractTextFromDocOrWeb(file, ext);
-                if (action.equals("UPPERCASE")) {
-                    outputCreated = new File(baseName + "_UPPER.txt");
-                    Files.writeString(outputCreated.toPath(), extractedText.toUpperCase());
-                } else if (action.equals("CLEAN TXT") || action.equals("TXT")) {
-                    outputCreated = new File(baseName + ".txt");
-                    Files.writeString(outputCreated.toPath(), extractedText.trim());
-                } else if (action.equals("SUMMARY")) {
-                    String[] words = extractedText.trim().split("\\s+");
-                    outputCreated = new File(baseName + "_Summary.txt");
-                    Files.writeString(outputCreated.toPath(), "Words: " + words.length + "\n\n" + extractedText);
-                } else if (action.equals("PDF")) {
-                    outputCreated = new File(baseName + ".pdf");
-                    createSimplePdfFromText(extractedText, outputCreated);
-                } else if (action.equals("DOCX")) {
-                    outputCreated = new File(baseName + "_Converted.docx");
-                    writeTextToDocx(extractedText, outputCreated);
-                } else if (IS_MAC && Arrays.asList("html", "rtf").contains(targetExt) && !ext.equals("mhtml")) {
-                    outputCreated = new File(baseName + "_Converted." + targetExt);
-                    new ProcessBuilder("textutil", "-convert", targetExt, path, "-output", outputCreated.getAbsolutePath())
-                            .start().waitFor();
+        } else if (Arrays.asList("docx", "doc", "rtf", "txt", "md", "html", "htm", "mhtml").contains(ext)) {
+            String extractedText = extractTextFromDocOrWeb(file, ext);
+            if (action.equals("COPY TXT")) {
+                copyStringToSystemClipboard(extractedText);
+                showGlossyToast("Copied Document Text to Clipboard!", null);
+                return null;
+            } else if (action.equals("UPPERCASE")) {
+                outputCreated = new File(baseName + "_UPPER.txt");
+                Files.writeString(outputCreated.toPath(), extractedText.toUpperCase());
+            } else if (action.equals("CLEAN TXT") || action.equals("TXT")) {
+                outputCreated = new File(baseName + ".txt");
+                Files.writeString(outputCreated.toPath(), extractedText.trim());
+                if (copyToClipboard) copyStringToSystemClipboard(extractedText.trim());
+            } else if (action.equals("SUMMARY")) {
+                String[] words = extractedText.trim().split("\\s+");
+                String summary = "File: " + file.getName() + "\nWord Count: " + words.length
+                        + "\nCharacters: " + extractedText.length() + "\n\n--- Preview ---\n"
+                        + extractedText.substring(0, Math.min(800, extractedText.length()));
+                outputCreated = new File(baseName + "_Summary.txt");
+                Files.writeString(outputCreated.toPath(), summary);
+                copyStringToSystemClipboard(summary);
+            } else if (action.equals("PDF")) {
+                outputCreated = new File(baseName + ".pdf");
+                createWordWrappedPdfFromText(extractedText, outputCreated);
+            } else if (action.equals("DOCX")) {
+                outputCreated = new File(baseName + "_Converted.docx");
+                writeTextToDocx(extractedText, outputCreated);
+            } else if (IS_MAC && Arrays.asList("html", "rtf").contains(targetExt) && !ext.equals("mhtml")) {
+                outputCreated = new File(baseName + "_Converted." + targetExt);
+                new ProcessBuilder("textutil", "-convert", targetExt, path, "-output", outputCreated.getAbsolutePath())
+                        .start().waitFor();
+            } else {
+                outputCreated = new File(baseName + "_Converted." + targetExt);
+                if (targetExt.equals("html")) {
+                    String html = "<html><head><meta charset='UTF-8'></head><body style='font-family:-apple-system,sans-serif;padding:24px;line-height:1.6;'><pre style='white-space:pre-wrap;'>"
+                            + extractedText.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") + "</pre></body></html>";
+                    Files.writeString(outputCreated.toPath(), html);
                 } else {
-                    outputCreated = new File(baseName + "_Converted." + targetExt);
                     Files.writeString(outputCreated.toPath(), extractedText);
                 }
             }
-
-            // D. PDF DOCUMENTS (.pdf)
-            else if (ext.equals("pdf")) {
-                try (PDDocument doc = Loader.loadPDF(file)) {
-                    if (action.equals("TXT") || action.equals("HTML") || action.equals("SUMMARY")) {
-                        String text = new PDFTextStripper().getText(doc);
-                        outputCreated = new File(baseName + (action.equals("HTML") ? ".html" : ".txt"));
-                        if (action.equals("HTML")) {
-                            text = "<html><body style='font-family:sans-serif;padding:24px;line-height:1.6;'><pre style='white-space:pre-wrap;'>"
-                                    + text.replace("&", "&amp;").replace("<", "&lt;") + "</pre></body></html>";
+        } else if (ext.equals("pdf")) {
+            try (PDDocument doc = Loader.loadPDF(file)) {
+                if (action.equals("SPLIT PAGES")) {
+                    int total = doc.getNumberOfPages();
+                    for (int p = 0; p < total; p++) {
+                        try (PDDocument single = new PDDocument()) {
+                            single.importPage(doc.getPage(p));
+                            outputCreated = new File(baseName + "_Page" + (p + 1) + ".pdf");
+                            single.save(outputCreated);
                         }
-                        Files.writeString(outputCreated.toPath(), text);
-                    } else if (action.equals("DOCX")) {
-                        String text = new PDFTextStripper().getText(doc);
-                        outputCreated = new File(baseName + ".docx");
-                        writeTextToDocx(text, outputCreated);
-                    } else {
-                        PDFRenderer renderer = new PDFRenderer(doc);
-                        int pagesToRender = action.equals("ALL PAGES PNG") ? doc.getNumberOfPages() : 1;
-                        String fmt = action.equalsIgnoreCase("JPG") ? "jpg" : "png";
-                        for (int p = 0; p < pagesToRender; p++) {
-                            BufferedImage pageImg = renderer.renderImageWithDPI(p, 200);
-                            if (fmt.equals("jpg")) {
-                                BufferedImage rgb = new BufferedImage(pageImg.getWidth(), pageImg.getHeight(), BufferedImage.TYPE_INT_RGB);
-                                Graphics2D g = rgb.createGraphics();
-                                g.drawImage(pageImg, 0, 0, java.awt.Color.WHITE, null);
-                                g.dispose();
-                                pageImg = rgb;
-                            }
-                            outputCreated = new File(baseName + "_Page" + (p + 1) + "." + fmt);
-                            ImageIO.write(pageImg, fmt, outputCreated);
+                    }
+                } else if (action.equals("COPY TXT")) {
+                    String text = new PDFTextStripper().getText(doc);
+                    copyStringToSystemClipboard(text);
+                    showGlossyToast("Copied PDF Text to Clipboard!", null);
+                    return null;
+                } else if (action.equals("SUMMARY")) {
+                    String text = new PDFTextStripper().getText(doc);
+                    String[] words = text.trim().isEmpty() ? new String[0] : text.trim().split("\\s+");
+                    String summary = "File: " + file.getName()
+                            + "\nTotal Pages: " + doc.getNumberOfPages()
+                            + "\nWord Count: " + words.length
+                            + "\nCharacter Count: " + text.length()
+                            + "\n\n--- Preview ---\n"
+                            + text.substring(0, Math.min(800, text.length()));
+                    outputCreated = new File(baseName + "_Summary.txt");
+                    Files.writeString(outputCreated.toPath(), summary);
+                    copyStringToSystemClipboard(summary);
+                } else if (action.equals("TXT") || action.equals("HTML")) {
+                    String text = new PDFTextStripper().getText(doc);
+                    outputCreated = new File(baseName + (action.equals("HTML") ? ".html" : ".txt"));
+                    if (action.equals("HTML")) {
+                        text = "<html><head><meta charset='UTF-8'></head><body style='font-family:-apple-system,sans-serif;padding:24px;line-height:1.6;'><pre style='white-space:pre-wrap;'>"
+                                + text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") + "</pre></body></html>";
+                    }
+                    Files.writeString(outputCreated.toPath(), text);
+                    if (copyToClipboard) copyStringToSystemClipboard(text);
+                } else if (action.equals("DOCX")) {
+                    String text = new PDFTextStripper().getText(doc);
+                    outputCreated = new File(baseName + ".docx");
+                    writeTextToDocx(text, outputCreated);
+                } else if (action.equals("PNG") || action.equals("JPG") || action.equals("ALL PAGES PNG")) {
+                    PDFRenderer renderer = new PDFRenderer(doc);
+                    int pagesToRender = action.equals("ALL PAGES PNG") ? doc.getNumberOfPages() : 1;
+                    String fmt = action.equalsIgnoreCase("JPG") ? "jpg" : "png";
+                    for (int p = 0; p < pagesToRender; p++) {
+                        BufferedImage pageImg = renderer.renderImageWithDPI(p, 200);
+                        if (fmt.equals("jpg")) {
+                            BufferedImage rgb = new BufferedImage(pageImg.getWidth(), pageImg.getHeight(), BufferedImage.TYPE_INT_RGB);
+                            Graphics2D g = rgb.createGraphics();
+                            g.drawImage(pageImg, 0, 0, java.awt.Color.WHITE, null);
+                            g.dispose();
+                            pageImg = rgb;
                         }
+                        outputCreated = new File(baseName + "_Page" + (p + 1) + "." + fmt);
+                        ImageIO.write(pageImg, fmt, outputCreated);
                     }
                 }
             }
-
-            // E. JSON FILES (.json)
-            else if (ext.equals("json")) {
-                String rawJson = Files.readString(file.toPath());
+        } else if (ext.equals("json")) {
+            String rawJson = Files.readString(file.toPath());
+            if (action.equals("COPY TXT")) {
+                copyStringToSystemClipboard(rawJson);
+                showGlossyToast("Copied JSON to Clipboard!", null);
+                return null;
+            } else if (action.equals("SUMMARY")) {
+                List<List<String>> jsonTable = parseJsonToTable(rawJson);
+                int recordCount = Math.max(0, jsonTable.size() - 1);
+                int fieldCount = jsonTable.isEmpty() ? 0 : jsonTable.get(0).size();
+                String keys = jsonTable.isEmpty() ? "none" : String.join(", ", jsonTable.get(0));
+                String summary = "File: " + file.getName()
+                        + "\nEstimated Records: " + recordCount
+                        + "\nFields (" + fieldCount + "): " + keys
+                        + "\nFile Size: " + file.length() + " bytes"
+                        + "\n\n--- Preview ---\n"
+                        + rawJson.substring(0, Math.min(800, rawJson.length()));
+                outputCreated = new File(baseName + "_Summary.txt");
+                Files.writeString(outputCreated.toPath(), summary);
+                copyStringToSystemClipboard(summary);
+            } else if (action.equals("BEAUTIFY")) {
+                String pretty = formatJson(rawJson, true);
+                outputCreated = new File(baseName + "_Pretty.json");
+                Files.writeString(outputCreated.toPath(), pretty);
+                if (copyToClipboard) copyStringToSystemClipboard(pretty);
+            } else if (action.equals("MINIFY")) {
+                String min = formatJson(rawJson, false);
+                outputCreated = new File(baseName + "_Min.json");
+                Files.writeString(outputCreated.toPath(), min);
+                if (copyToClipboard) copyStringToSystemClipboard(min);
+            } else {
                 List<List<String>> jsonTable = parseJsonToTable(rawJson);
                 if (action.equals("CSV")) {
                     outputCreated = new File(baseName + ".csv");
@@ -794,49 +1072,91 @@ public class RadialConverterApp extends Application {
                 } else if (action.equals("TXT")) {
                     outputCreated = new File(baseName + ".txt");
                     Files.writeString(outputCreated.toPath(), rawJson);
+                    if (copyToClipboard) copyStringToSystemClipboard(rawJson);
                 } else if (action.equals("PDF")) {
                     outputCreated = new File(baseName + ".pdf");
-                    createSimplePdfFromText(rawJson, outputCreated);
+                    createWordWrappedPdfFromText(rawJson, outputCreated);
                 }
             }
+        } else if (Arrays.asList("jpg", "jpeg", "png", "heic", "webp", "bmp", "tiff").contains(ext)) {
+            if (action.equals("STRIP EXIF")) {
+                BufferedImage cleanImg = readImageWithMacFallback(file);
+                if (cleanImg != null) {
+                    outputCreated = new File(baseName + "_Clean.png");
+                    ImageIO.write(cleanImg, "png", outputCreated);
+                }
+            } else if (action.equals("PDF")) {
+                BufferedImage img = readImageWithMacFallback(file);
+                if (img != null && img.getWidth() > 0 && img.getHeight() > 0) {
+                    outputCreated = new File(baseName + ".pdf");
+                    try (PDDocument doc = new PDDocument()) {
+                        PDPage page = new PDPage();
+                        doc.addPage(page);
+                        PDImageXObject pdImage = LosslessFactoryBridge.fromBufferedImage(doc, img);
+                        try (PDPageContentStream cs = new PDPageContentStream(doc, page)) {
+                            float scale = Math.min(500f / img.getWidth(), 700f / img.getHeight());
+                            cs.drawImage(pdImage, 50, 100, img.getWidth() * scale, img.getHeight() * scale);
+                        }
+                        doc.save(outputCreated);
+                    }
+                }
+            } else if (action.equals("COMPRESS")) {
+                outputCreated = new File(baseName + "_Compressed.jpg");
+                boolean compressed = false;
+                if (IS_MAC) {
+                    try {
+                        Process p = new ProcessBuilder("sips", "-s", "format", "jpeg", "-s", "formatOptions", "50",
+                                path, "--out", outputCreated.getAbsolutePath()).start();
+                        if (p.waitFor() == 0 && outputCreated.exists() && outputCreated.length() > 0) {
+                            compressed = true;
+                        }
+                    } catch (Exception ignored) {}
+                }
+                if (!compressed) {
+                    BufferedImage orig = readImageWithMacFallback(file);
+                    if (orig != null) {
+                        BufferedImage rgb = new BufferedImage(orig.getWidth(), orig.getHeight(), BufferedImage.TYPE_INT_RGB);
+                        Graphics2D g = rgb.createGraphics();
+                        g.drawImage(orig, 0, 0, java.awt.Color.WHITE, null);
+                        g.dispose();
 
-            // F. IMAGES (.jpg, .jpeg, .png, .heic, .webp, .bmp, .tiff)
-            else if (Arrays.asList("jpg", "jpeg", "png", "heic", "webp", "bmp", "tiff").contains(ext)) {
-                if (action.equals("PDF")) {
-                    BufferedImage img = readImageWithMacFallback(file);
-                    if (img != null) {
-                        outputCreated = new File(baseName + ".pdf");
-                        try (PDDocument doc = new PDDocument()) {
-                            PDPage page = new PDPage();
-                            doc.addPage(page);
-                            PDImageXObject pdImage = LosslessFactoryBridge.fromBufferedImage(doc, img);
-                            try (PDPageContentStream cs = new PDPageContentStream(doc, page)) {
-                                float scale = Math.min(500f / img.getWidth(), 700f / img.getHeight());
-                                cs.drawImage(pdImage, 50, 100, img.getWidth() * scale, img.getHeight() * scale);
+                        Iterator<javax.imageio.ImageWriter> writers = ImageIO.getImageWritersByFormatName("jpg");
+                        if (writers.hasNext()) {
+                            javax.imageio.ImageWriter writer = writers.next();
+                            try (javax.imageio.stream.ImageOutputStream ios = ImageIO.createImageOutputStream(outputCreated)) {
+                                writer.setOutput(ios);
+                                javax.imageio.ImageWriteParam param = writer.getDefaultWriteParam();
+                                if (param.canWriteCompressed()) {
+                                    param.setCompressionMode(javax.imageio.ImageWriteParam.MODE_EXPLICIT);
+                                    param.setCompressionQuality(0.5f);
+                                }
+                                writer.write(null, new javax.imageio.IIOImage(rgb, null, null), param);
+                            } finally {
+                                writer.dispose();
                             }
-                            doc.save(outputCreated);
                         }
                     }
-                } else if (action.equals("COMPRESS") && IS_MAC) {
-                    outputCreated = new File(baseName + "_Compressed.jpg");
-                    new ProcessBuilder("sips", "-s", "format", "jpeg", "-s", "formatOptions", "50",
-                            path, "--out", outputCreated.getAbsolutePath()).start().waitFor();
-                } else if (action.equals("GRAYSCALE")) {
-                    BufferedImage src = readImageWithMacFallback(file);
-                    if (src != null) {
-                        BufferedImage bw = new BufferedImage(src.getWidth(), src.getHeight(), BufferedImage.TYPE_BYTE_GRAY);
-                        Graphics2D g = bw.createGraphics();
-                        g.drawImage(src, 0, 0, null);
-                        g.dispose();
-                        outputCreated = new File(baseName + "_BW.png");
-                        ImageIO.write(bw, "png", outputCreated);
-                    }
-                } else if (IS_MAC && Arrays.asList("jpg", "png", "heic", "tiff", "bmp").contains(targetExt)) {
-                    String sipsFmt = targetExt.equals("jpg") ? "jpeg" : targetExt;
-                    outputCreated = new File(baseName + "_Converted." + targetExt);
-                    new ProcessBuilder("sips", "-s", "format", sipsFmt, path, "--out", outputCreated.getAbsolutePath())
-                            .start().waitFor();
-                } else {
+                }
+            } else if (action.equals("GRAYSCALE")) {
+                BufferedImage src = readImageWithMacFallback(file);
+                if (src != null) {
+                    BufferedImage bw = new BufferedImage(src.getWidth(), src.getHeight(), BufferedImage.TYPE_BYTE_GRAY);
+                    Graphics2D g = bw.createGraphics();
+                    g.drawImage(src, 0, 0, null);
+                    g.dispose();
+                    outputCreated = new File(baseName + "_BW.png");
+                    ImageIO.write(bw, "png", outputCreated);
+                }
+            } else if (IS_MAC && Arrays.asList("jpg", "png", "heic", "tiff", "bmp").contains(targetExt)) {
+                String sipsFmt = targetExt.equals("jpg") ? "jpeg" : targetExt;
+                outputCreated = new File(baseName + "_Converted." + targetExt);
+                boolean sipsOk = false;
+                try {
+                    Process p = new ProcessBuilder("sips", "-s", "format", sipsFmt, path, "--out", outputCreated.getAbsolutePath())
+                            .start();
+                    sipsOk = (p.waitFor() == 0 && outputCreated.exists() && outputCreated.length() > 0);
+                } catch (Exception ignored) {}
+                if (!sipsOk) {
                     BufferedImage img = readImageWithMacFallback(file);
                     if (img != null) {
                         if (targetExt.equals("jpg") || targetExt.equals("bmp")) {
@@ -846,37 +1166,141 @@ public class RadialConverterApp extends Application {
                             g.dispose();
                             img = rgb;
                         }
-                        outputCreated = new File(baseName + "_Converted." + targetExt);
                         ImageIO.write(img, targetExt, outputCreated);
                     }
                 }
+            } else {
+                BufferedImage img = readImageWithMacFallback(file);
+                if (img != null) {
+                    if (targetExt.equals("jpg") || targetExt.equals("bmp")) {
+                        BufferedImage rgb = new BufferedImage(img.getWidth(), img.getHeight(), BufferedImage.TYPE_INT_RGB);
+                        Graphics2D g = rgb.createGraphics();
+                        g.drawImage(img, 0, 0, java.awt.Color.WHITE, null);
+                        g.dispose();
+                        img = rgb;
+                    }
+                    outputCreated = new File(baseName + "_Converted." + targetExt);
+                    ImageIO.write(img, targetExt, outputCreated);
+                }
             }
+        }
 
-            if (outputCreated != null && outputCreated.exists()) {
-                System.out.println("✅ OFFLINE CONVERSION COMPLETE: " + outputCreated.getAbsolutePath());
-                if (radialStage != null) {
-                    showGlossyToast("Created " + outputCreated.getName(), outputCreated);
-                }
-                if (IS_MAC) {
-                    new ProcessBuilder("afplay", "/System/Library/Sounds/Glass.aiff").start();
-                }
-            }
-        } catch (Exception ex) {
-            ex.printStackTrace();
+        return outputCreated;
+    }
+
+    private void finishConversionNotification(String message, File createdFile) {
+        if (radialStage != null) {
+            showGlossyToast(message, createdFile);
+        }
+        if (IS_MAC) {
+            try { new ProcessBuilder("afplay", "/System/Library/Sounds/Glass.aiff").start(); } catch (Exception ignored) {}
         }
     }
 
-    // =========================================================
-    // 7. OFFLINE PARSERS & WRITERS
-    // =========================================================
+    private void copyStringToSystemClipboard(String text) {
+        try {
+            StringSelection selection = new StringSelection(text);
+            Toolkit.getDefaultToolkit().getSystemClipboard().setContents(selection, selection);
+        } catch (Exception ignored) {}
+    }
+
+    private String stripExt(String filename) {
+        int idx = filename.lastIndexOf('.');
+        return idx > 0 ? filename.substring(0, idx) : filename;
+    }
+
+    private void createWordWrappedPdfFromText(String text, File outPdf) throws Exception {
+        try (PDDocument doc = new PDDocument()) {
+            PDFont font = new PDType1Font(Standard14Fonts.FontName.HELVETICA);
+            float fontSize = 10.5f;
+            float leading = 15.0f;
+            float margin = 48f;
+            float maxWidth = 612f - (2 * margin);
+
+            List<String> wrappedLines = new ArrayList<>();
+            for (String rawLine : text.split("\\r?\\n")) {
+                String sanitized = rawLine.replace("\t", "    ").replaceAll("[^\\x20-\\x7E]", " ");
+                if (sanitized.isBlank()) {
+                    wrappedLines.add("");
+                    continue;
+                }
+                String[] words = sanitized.split(" ");
+                StringBuilder currentLine = new StringBuilder();
+                for (String word : words) {
+                    if (word.isEmpty()) continue;
+                    float wordWidth = (font.getStringWidth(word) / 1000f) * fontSize;
+                    if (wordWidth > maxWidth) {
+                        if (!currentLine.isEmpty()) {
+                            wrappedLines.add(currentLine.toString());
+                            currentLine = new StringBuilder();
+                        }
+                        StringBuilder chunk = new StringBuilder();
+                        for (int c = 0; c < word.length(); c++) {
+                            char ch = word.charAt(c);
+                            if ((font.getStringWidth(chunk.toString() + ch) / 1000f) * fontSize > maxWidth) {
+                                wrappedLines.add(chunk.toString());
+                                chunk = new StringBuilder().append(ch);
+                            } else {
+                                chunk.append(ch);
+                            }
+                        }
+                        if (!chunk.isEmpty()) currentLine = chunk;
+                        continue;
+                    }
+
+                    String candidate = currentLine.isEmpty() ? word : currentLine + " " + word;
+                    float width = (font.getStringWidth(candidate) / 1000f) * fontSize;
+                    if (width > maxWidth && !currentLine.isEmpty()) {
+                        wrappedLines.add(currentLine.toString());
+                        currentLine = new StringBuilder(word);
+                    } else {
+                        currentLine = new StringBuilder(candidate);
+                    }
+                }
+                if (!currentLine.isEmpty()) wrappedLines.add(currentLine.toString());
+            }
+
+            if (wrappedLines.isEmpty()) wrappedLines.add("");
+
+            int lineIdx = 0;
+            while (lineIdx < wrappedLines.size()) {
+                PDPage page = new PDPage();
+                doc.addPage(page);
+                try (PDPageContentStream cs = new PDPageContentStream(doc, page)) {
+                    cs.beginText();
+                    cs.setFont(font, fontSize);
+                    cs.setLeading(leading);
+                    cs.newLineAtOffset(margin, 740);
+                    for (int row = 0; row < 45 && lineIdx < wrappedLines.size(); row++, lineIdx++) {
+                        String line = wrappedLines.get(lineIdx);
+                        if (!line.isEmpty()) {
+                            cs.showText(line);
+                        }
+                        cs.newLine();
+                    }
+                    cs.endText();
+                }
+            }
+            doc.save(outPdf);
+        }
+    }
+
     private BufferedImage readImageWithMacFallback(File file) throws Exception {
-        BufferedImage img = ImageIO.read(file);
+        BufferedImage img = null;
+        try {
+            img = ImageIO.read(file);
+        } catch (Exception ignored) {}
+
         if (img == null && IS_MAC) {
             File tmp = File.createTempFile("mira_decode", ".png");
-            new ProcessBuilder("sips", "-s", "format", "png", file.getAbsolutePath(), "--out", tmp.getAbsolutePath())
-                    .start().waitFor();
-            img = ImageIO.read(tmp);
-            tmp.delete();
+            try {
+                Process p = new ProcessBuilder("sips", "-s", "format", "png", file.getAbsolutePath(), "--out", tmp.getAbsolutePath()).start();
+                if (p.waitFor() == 0 && tmp.exists() && tmp.length() > 0) {
+                    img = ImageIO.read(tmp);
+                }
+            } finally {
+                tmp.delete();
+            }
         }
         return img;
     }
@@ -900,14 +1324,15 @@ public class RadialConverterApp extends Application {
             for (String line : text.split("\\r?\\n")) {
                 XWPFParagraph p = doc.createParagraph();
                 XWPFRun run = p.createRun();
-                run.setText(line);
+                String clean = line.replaceAll("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F]", "");
+                run.setText(clean);
                 run.setFontSize(11);
             }
             doc.write(fos);
         }
     }
 
-    private List<List<String>> parseJsonToTable(String rawJson) {
+    private java.util.List<java.util.List<String>> parseJsonToTable(String rawJson) {
         List<Map<String, String>> records = new ArrayList<>();
         Set<String> headers = new LinkedHashSet<>();
         Matcher objMatcher = Pattern.compile("\\{([^\\{\\}]*)\\}").matcher(rawJson);
@@ -919,32 +1344,92 @@ public class RadialConverterApp extends Application {
             Map<String, String> rowMap = new LinkedHashMap<>();
             while (kv.find()) {
                 String k = kv.group(1).trim();
-                String v = kv.group(3) != null ? kv.group(3) : kv.group(2).trim();
+                String v = kv.group(3) != null ? kv.group(3) : (kv.group(2) != null ? kv.group(2).trim() : "");
                 headers.add(k);
                 rowMap.put(k, v);
             }
             if (!rowMap.isEmpty()) records.add(rowMap);
         }
 
-        List<List<String>> table = new ArrayList<>();
+        java.util.List<java.util.List<String>> table = new ArrayList<>();
         if (headers.isEmpty()) {
             table.add(Collections.singletonList("Content"));
             for (String line : rawJson.split("\\r?\\n")) {
-                table.add(Collections.singletonList(line.trim()));
+                if (!line.trim().isEmpty()) {
+                    table.add(Collections.singletonList(line.trim()));
+                }
             }
             return table;
         }
 
-        List<String> headerList = new ArrayList<>(headers);
+        java.util.List<String> headerList = new ArrayList<>(headers);
         table.add(headerList);
         for (Map<String, String> rec : records) {
-            List<String> row = new ArrayList<>();
+            java.util.List<String> row = new ArrayList<>();
             for (String h : headerList) {
                 row.add(rec.getOrDefault(h, ""));
             }
             table.add(row);
         }
         return table;
+    }
+
+    private String formatJson(String raw, boolean pretty) {
+        StringBuilder sb = new StringBuilder();
+        int indent = 0;
+        boolean inQuotes = false;
+        boolean escaped = false;
+        for (int i = 0; i < raw.length(); i++) {
+            char ch = raw.charAt(i);
+            if (escaped) {
+                sb.append(ch);
+                escaped = false;
+                continue;
+            }
+            if (ch == '\\') {
+                sb.append(ch);
+                escaped = true;
+                continue;
+            }
+            if (ch == '"') {
+                inQuotes = !inQuotes;
+                sb.append(ch);
+                continue;
+            }
+            if (inQuotes) {
+                sb.append(ch);
+                continue;
+            }
+            if (Character.isWhitespace(ch)) {
+                continue;
+            }
+            if (ch == '{' || ch == '[') {
+                sb.append(ch);
+                if (pretty) {
+                    indent++;
+                    sb.append("\n").append("  ".repeat(indent));
+                }
+            } else if (ch == '}' || ch == ']') {
+                if (pretty) {
+                    indent = Math.max(0, indent - 1);
+                    sb.append("\n").append("  ".repeat(indent));
+                }
+                sb.append(ch);
+            } else if (ch == ',') {
+                sb.append(ch);
+                if (pretty) {
+                    sb.append("\n").append("  ".repeat(indent));
+                }
+            } else if (ch == ':') {
+                sb.append(ch);
+                if (pretty) {
+                    sb.append(" ");
+                }
+            } else {
+                sb.append(ch);
+            }
+        }
+        return sb.toString();
     }
 
     private String buildHtmlTable(List<List<String>> table) {
@@ -957,7 +1442,7 @@ public class RadialConverterApp extends Application {
             html.append("<tr>");
             for (String cell : table.get(i)) {
                 html.append(i == 0 ? "<th>" : "<td>")
-                        .append(cell.replace("&", "&amp;").replace("<", "&lt;"))
+                        .append(cell.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
                         .append(i == 0 ? "</th>" : "</td>");
             }
             html.append("</tr>\n");
@@ -970,11 +1455,17 @@ public class RadialConverterApp extends Application {
         List<List<String>> rows = new ArrayList<>();
         if (ext.equals("csv") || ext.equals("tsv")) {
             String sep = ext.equals("tsv") ? "\t" : ",";
-            for (String line : Files.readAllLines(file.toPath())) {
+            List<String> lines = Files.readAllLines(file.toPath());
+            for (int i = 0; i < lines.size(); i++) {
+                String line = lines.get(i);
+                if (i == 0 && line.startsWith("\uFEFF")) {
+                    line = line.substring(1);
+                }
                 rows.add(Arrays.stream(line.split(sep, -1)).map(String::trim).collect(Collectors.toList()));
             }
         } else {
             try (Workbook wb = WorkbookFactory.create(file)) {
+                if (wb.getNumberOfSheets() == 0) return rows;
                 Sheet sheet = wb.getSheetAt(0);
                 DataFormatter formatter = new DataFormatter();
                 for (Row row : sheet) {
@@ -995,7 +1486,13 @@ public class RadialConverterApp extends Application {
         StringBuilder sb = new StringBuilder();
         for (List<String> row : table) {
             sb.append(row.stream()
-                    .map(c -> c.contains(",") || c.contains("\"") ? "\"" + c.replace("\"", "\"\"") + "\"" : c)
+                    .map(c -> {
+                        if (c == null) return "\"\"";
+                        if (c.contains(",") || c.contains("\"") || c.contains("\n") || c.contains("\r")) {
+                            return "\"" + c.replace("\"", "\"\"") + "\"";
+                        }
+                        return c;
+                    })
                     .collect(Collectors.joining(","))).append("\n");
         }
         Files.writeString(outCsv.toPath(), sb.toString());
@@ -1029,47 +1526,30 @@ public class RadialConverterApp extends Application {
     }
 
     private String escapeJson(String s) {
-        return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ").replace("\r", "");
+        if (s == null) return "";
+        return s.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
     }
 
     private static class LosslessFactoryBridge {
         static PDImageXObject fromBufferedImage(PDDocument doc, BufferedImage img) throws Exception {
-            File tmp = File.createTempFile("mira_img", ".png");
-            ImageIO.write(img, "png", tmp);
-            PDImageXObject obj = PDImageXObject.createFromFileByContent(tmp, doc);
-            tmp.delete();
-            return obj;
-        }
-    }
-
-    private void createSimplePdfFromText(String text, File outPdf) throws Exception {
-        try (PDDocument doc = new PDDocument()) {
-            String[] lines = text.split("\\r?\\n");
-            int lineIdx = 0;
-            while (lineIdx < lines.length) {
-                PDPage page = new PDPage();
-                doc.addPage(page);
-                try (PDPageContentStream cs = new PDPageContentStream(doc, page)) {
-                    cs.beginText();
-                    cs.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 10);
-                    cs.setLeading(14f);
-                    cs.newLineAtOffset(45, 740);
-                    for (int row = 0; row < 48 && lineIdx < lines.length; row++, lineIdx++) {
-                        String clean = lines[lineIdx].replaceAll("[^\\x20-\\x7E]", " ");
-                        if (clean.length() > 88) clean = clean.substring(0, 88);
-                        cs.showText(clean);
-                        cs.newLine();
-                    }
-                    cs.endText();
+            try {
+                return org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory.createFromImage(doc, img);
+            } catch (Throwable t) {
+                File tmp = File.createTempFile("mira_img", ".png");
+                try {
+                    ImageIO.write(img, "png", tmp);
+                    return PDImageXObject.createFromFileByContent(tmp, doc);
+                } finally {
+                    tmp.delete();
                 }
             }
-            doc.save(outPdf);
         }
     }
 
-    // =========================================================
-    // 8. GLOSSY TOAST BANNER & ADD BG STUDIO
-    // =========================================================
     private void showGlossyToast(String title, File createdFile) {
         Platform.runLater(() -> {
             Stage toast = new Stage(StageStyle.TRANSPARENT);
@@ -1090,11 +1570,8 @@ public class RadialConverterApp extends Application {
                 revealBtn.setStyle("-fx-background-color: #38BDF8; -fx-text-fill: #0F172A; -fx-font-weight: bold; -fx-background-radius: 8; -fx-padding: 4 12;");
                 revealBtn.setOnAction(e -> {
                     try {
-                        if (IS_MAC) {
-                            new ProcessBuilder("open", "-R", createdFile.getAbsolutePath()).start();
-                        } else {
-                            new ProcessBuilder("explorer.exe", "/select,", createdFile.getAbsolutePath()).start();
-                        }
+                        if (IS_MAC) new ProcessBuilder("open", "-R", createdFile.getAbsolutePath()).start();
+                        else new ProcessBuilder("explorer.exe", "/select,", createdFile.getAbsolutePath()).start();
                         toast.close();
                     } catch (Exception ignored) {}
                 });
@@ -1103,8 +1580,8 @@ public class RadialConverterApp extends Application {
 
             Scene sc = new Scene(banner, Color.TRANSPARENT);
             toast.setScene(sc);
-            Rectangle2D bounds = Screen.getPrimary().getVisualBounds();
-            toast.setX(bounds.getMaxX() - 360);
+            Rectangle2D bounds = Screen.getPrimary() != null ? Screen.getPrimary().getVisualBounds() : new Rectangle2D(0, 0, 1920, 1080);
+            toast.setX(bounds.getMaxX() - 380);
             toast.setY(bounds.getMaxY() - 90);
             toast.show();
 
@@ -1146,16 +1623,12 @@ public class RadialConverterApp extends Application {
                     ImageIO.write(latestRender[0], "png", out);
                     showGlossyToast("Exported " + out.getName(), out);
                     modal.close();
-                } catch (Exception ex) {
-                    ex.printStackTrace();
-                }
+                } catch (Exception ex) { ex.printStackTrace(); }
             });
             root.getChildren().addAll(previewView, padSlider, cornerSlider, saveBtn);
             modal.setScene(new Scene(root, 440, 420));
             modal.show();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        } catch (Exception e) { e.printStackTrace(); }
     }
 
     private BufferedImage renderStyledBackground(BufferedImage fg, int pad, int radius) {
@@ -1182,16 +1655,20 @@ public class RadialConverterApp extends Application {
         return out;
     }
 
-    // =========================================================
-    // 9. SUMMON MENU (WITH LIVE FROSTED BACKDROP CAPTURE)
-    // =========================================================
     public void summonRadialMenu() {
-        Point cursor = MouseInfo.getPointerInfo().getLocation();
+        if (shortcutPaused) return;
+        Point p;
+        try {
+            java.awt.PointerInfo pi = MouseInfo.getPointerInfo();
+            p = (pi != null) ? pi.getLocation() : new Point(500, 500);
+        } catch (Exception e) {
+            p = new Point(500, 500);
+        }
+        final Point cursor = p;
 
         CompletableFuture.runAsync(() -> {
-            // Re-sync with the user's current Mac/Windows Dark/Light mode and Accent Color
             syncWithUserOsTheme();
-            File selected = getCurrentlySelectedFileFromOS();
+            List<File> selected = getCurrentlySelectedFilesFromOS();
 
             Platform.runLater(() -> {
                 if (radialStage.isShowing()) {
@@ -1199,23 +1676,22 @@ public class RadialConverterApp extends Application {
                     return;
                 }
 
-                Rectangle2D bounds = Screen.getPrimary().getVisualBounds();
+                Rectangle2D bounds = Screen.getPrimary() != null ? Screen.getPrimary().getVisualBounds() : new Rectangle2D(0, 0, 1920, 1080);
                 double targetX = Math.max(bounds.getMinX() + 8, Math.min(cursor.x - SIZE / 2.0, bounds.getMaxX() - SIZE - 8));
                 double targetY = Math.max(bounds.getMinY() + 8, Math.min(cursor.y - SIZE / 2.0, bounds.getMaxY() - SIZE - 8));
 
-                // Capture the exact screen region behind the wheel to create a true frosted blur!
                 try {
                     Robot robot = new Robot();
                     blurredBackdropSnapshot = robot.getScreenCapture(null, new Rectangle2D(targetX, targetY, SIZE, SIZE));
-                } catch (Exception ignored) {
+                } catch (Throwable ignored) {
                     blurredBackdropSnapshot = null;
                 }
 
-                activeFile = selected;
+                activeFiles = selected;
                 isToolsMode = false;
                 hoveredIndex = -1;
                 centerHovered = false;
-                updateSlicesForFile(activeFile);
+                updateSlicesForFiles(activeFiles);
                 drawRadialMenu();
 
                 radialStage.setX(targetX);
@@ -1252,7 +1728,10 @@ public class RadialConverterApp extends Application {
                         modifierDown = true;
                     } else if (!IS_MAC && code == NativeKeyEvent.VC_SHIFT) {
                         modifierDown = true;
-                    } else if (modifierDown && code == NativeKeyEvent.VC_E) {
+                    }
+
+                    boolean isMod = modifierDown || ((e.getModifiers() & (IS_MAC ? NativeKeyEvent.META_MASK : NativeKeyEvent.SHIFT_MASK)) != 0);
+                    if (isMod && code == NativeKeyEvent.VC_E) {
                         summonRadialMenu();
                     }
                 }
