@@ -36,7 +36,7 @@ jobs:
           cache: 'maven'
 
       - name: Compile & Package Shaded Fat-JAR
-        run: mvn clean package -DskipTests -Dmaven.compiler.source=21 -Dmaven.compiler.target=21
+        run: mvn clean package -DskipTests
 
       - name: Stage Shaded JAR for jpackage
         shell: bash

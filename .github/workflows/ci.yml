@@ -1,0 +1,50 @@
+name: Continuous Integration & Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build & Verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Compile & Package M.I.R.A.
+        run: mvn clean package -DskipTests
+
+      - name: Verify Shaded Fat-JAR Exists
+        shell: bash
+        run: |
+          if [ -f target/mira-1.0.0-shaded.jar ]; then
+            echo "✅ Shaded fat-JAR built successfully: target/mira-1.0.0-shaded.jar"
+            ls -lh target/mira-1.0.0-shaded.jar
+          else
+            echo "❌ Shaded fat-JAR missing!"
+            exit 1
+          fi
+
+      - name: Upload Shaded Fat-JAR Artifact
+        if: matrix.os == 'macos-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: MIRA-Universal-Jar
+          path: target/mira-1.0.0-shaded.jar
+          if-no-files-found: error

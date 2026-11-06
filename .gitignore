@@ -1,6 +1,8 @@
 # Maven & Java build outputs
 target/
 dist/
+dependency-reduced-pom.xml
+jpackage-input/
 *.class
 *.jar
 *.war
