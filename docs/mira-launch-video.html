@@ -1,0 +1,1335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>M.I.R.A. — Official 18s Cinematic Launch Video</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI Variable", sans-serif;
+    }
+
+    body {
+      background: #020617;
+      color: #f8fafc;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Studio Control Bar (Auto-hides during playback/recording) */
+    .studio-controls {
+      position: fixed;
+      top: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 9999;
+      display: flex;
+      gap: 10px;
+      padding: 8px 14px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+      transition: opacity 0.35s ease, transform 0.35s ease;
+    }
+
+    body.cinema-clean .studio-controls {
+      opacity: 0;
+      pointer-events: none;
+      transform: translateX(-50%) translateY(-20px);
+    }
+
+    .ctrl-btn {
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .ctrl-btn:hover {
+      background: #38bdf8;
+      color: #0f172a;
+      border-color: #38bdf8;
+    }
+
+    .ctrl-btn.rec {
+      background: rgba(244, 63, 94, 0.22);
+      border-color: rgba(244, 63, 94, 0.6);
+      color: #fda4af;
+    }
+
+    .ctrl-btn.rec:hover {
+      background: #f43f5e;
+      color: #fff;
+    }
+
+    /* 16:9 4K Cinema Stage */
+    .cinema-viewport {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      perspective: 1600px;
+      overflow: hidden;
+      background: radial-gradient(circle at 50% 35%, #0c264e 0%, #051129 55%, #020617 100%);
+    }
+
+    /* 3D Camera Rig */
+    .camera-rig {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      transform-style: preserve-3d;
+      will-change: transform;
+    }
+
+    /* Exact Midnight Blue Reflections Wallpaper */
+    .desktop-wallpaper {
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(ellipse at 25% 20%, rgba(37, 99, 235, 0.36) 0%, transparent 50%),
+        radial-gradient(ellipse at 75% 80%, rgba(14, 165, 233, 0.28) 0%, transparent 55%),
+        repeating-linear-gradient(90deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 2px, transparent 2px, transparent 40px),
+        linear-gradient(180deg, #071936 0%, #0b2956 48%, #041026 100%);
+    }
+
+    /* Window pane silhouette lines from user's wallpaper */
+    .wallpaper-grid-v {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 56%;
+      width: 10px;
+      background: rgba(2, 6, 23, 0.75);
+      box-shadow: 420px 0 0 rgba(2, 6, 23, 0.75);
+    }
+
+    .wallpaper-grid-h {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 72%;
+      height: 8px;
+      background: rgba(2, 6, 23, 0.75);
+    }
+
+    /* macOS Top Menu Bar */
+    .mac-menubar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 28px;
+      padding: 0 18px;
+      background: rgba(7, 16, 35, 0.65);
+      backdrop-filter: blur(20px);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 13px;
+      font-weight: 500;
+      color: rgba(255, 255, 255, 0.92);
+      z-index: 40;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .menu-left, .menu-right {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .menu-bold {
+      font-weight: 700;
+    }
+
+    /* M.I.R.A. Custom Tray Icon in Menu Bar */
+    .mira-tray-pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 8px;
+      border-radius: 6px;
+      background: rgba(56, 189, 248, 0.16);
+      border: 1px solid rgba(56, 189, 248, 0.45);
+      transition: all 0.25s ease;
+    }
+
+    .mira-tray-icon {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 2px solid #38bdf8;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .mira-tray-dot {
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: #ffffff;
+    }
+
+    .battery-pill {
+      background: #eab308;
+      color: #020617;
+      font-size: 10px;
+      font-weight: 800;
+      padding: 1px 6px;
+      border-radius: 4px;
+    }
+
+    /* Left Desktop Widgets (Exact match to screenshot) */
+    .desktop-widgets {
+      position: absolute;
+      top: 48px;
+      left: 18px;
+      width: 240px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      z-index: 5;
+    }
+
+    .photo-widget {
+      width: 230px;
+      height: 230px;
+      border-radius: 24px;
+      background:
+        radial-gradient(circle at 60% 35%, rgba(56, 189, 248, 0.35), rgba(15, 23, 42, 0.85)),
+        linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      box-shadow: 0 16px 32px rgba(0, 0, 0, 0.45);
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      align-items: flex-end;
+      padding: 16px;
+    }
+
+    .photo-widget::before {
+      content: "✦ M.I.R.A. STUDIO";
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      color: rgba(186, 230, 253, 0.75);
+    }
+
+    .clock-row {
+      display: flex;
+      gap: 12px;
+    }
+
+    .widget-box {
+      width: 109px;
+      height: 109px;
+      border-radius: 22px;
+      background: rgba(15, 32, 68, 0.68);
+      backdrop-filter: blur(18px);
+      border: 1px solid rgba(125, 211, 252, 0.18);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 12px 24px rgba(0, 0, 0, 0.35);
+    }
+
+    .clock-sub {
+      font-size: 9px;
+      font-weight: 700;
+      color: #38bdf8;
+      letter-spacing: 0.08em;
+      margin-bottom: 2px;
+    }
+
+    .clock-big {
+      font-size: 34px;
+      font-weight: 800;
+      color: #38bdf8;
+      letter-spacing: -0.03em;
+      line-height: 1;
+    }
+
+    .battery-widget {
+      width: 109px;
+      height: 109px;
+      border-radius: 22px;
+      background: rgba(15, 32, 68, 0.68);
+      backdrop-filter: blur(18px);
+      border: 1px solid rgba(125, 211, 252, 0.18);
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .bat-ring {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      border: 4px solid #38bdf8;
+      border-left-color: rgba(56, 189, 248, 0.25);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+    }
+
+    .bat-pct {
+      font-size: 28px;
+      font-weight: 700;
+      color: #38bdf8;
+    }
+
+    /* Exact macOS Finder Window (Downloads) */
+    .finder-window {
+      position: absolute;
+      top: 130px;
+      left: 270px;
+      width: 780px;
+      height: 470px;
+      border-radius: 12px;
+      background: #1e2229;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      box-shadow: 0 30px 70px rgba(0, 0, 0, 0.65);
+      display: flex;
+      overflow: hidden;
+      z-index: 10;
+      transition: background 0.35s ease, color 0.35s ease, border-color 0.35s ease;
+    }
+
+    .finder-window.light-theme {
+      background: #f8fafc;
+      color: #0f172a;
+      border-color: rgba(15, 23, 42, 0.18);
+    }
+
+    .finder-sidebar {
+      width: 165px;
+      background: rgba(24, 28, 36, 0.92);
+      border-right: 1px solid rgba(255, 255, 255, 0.08);
+      padding: 14px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      transition: background 0.35s ease;
+    }
+
+    .finder-window.light-theme .finder-sidebar {
+      background: #e2e8f0;
+      border-right-color: rgba(15, 23, 42, 0.1);
+    }
+
+    .traffic-lights {
+      display: flex;
+      gap: 8px;
+      padding: 4px 6px 12px 6px;
+    }
+
+    .tl { width: 12px; height: 12px; border-radius: 50%; }
+    .tl.r { background: #ff5f56; }
+    .tl.y { background: #ffbd2e; }
+    .tl.g { background: #27c93f; }
+
+    .side-group-label {
+      font-size: 10px;
+      font-weight: 700;
+      color: rgba(148, 163, 184, 0.7);
+      padding: 6px 8px 2px;
+    }
+
+    .side-item {
+      padding: 5px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      color: rgba(248, 250, 252, 0.85);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .finder-window.light-theme .side-item {
+      color: #1e293b;
+    }
+
+    .side-item.active {
+      background: rgba(56, 189, 248, 0.22);
+      color: #38bdf8;
+      font-weight: 600;
+    }
+
+    .finder-main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .finder-toolbar {
+      height: 46px;
+      padding: 0 18px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .finder-header-row {
+      display: grid;
+      grid-template-columns: 1fr 80px 120px 140px;
+      padding: 6px 16px;
+      font-size: 11px;
+      color: #94a3b8;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .finder-list {
+      flex: 1;
+      padding: 4px 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .file-row {
+      display: grid;
+      grid-template-columns: 1fr 80px 120px 140px;
+      padding: 6px 16px;
+      font-size: 12px;
+      align-items: center;
+      color: #e2e8f0;
+      border-radius: 4px;
+      margin: 0 6px;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+
+    .finder-window.light-theme .file-row {
+      color: #1e293b;
+    }
+
+    .file-row.selected {
+      background: #2563eb !important;
+      color: #ffffff !important;
+    }
+
+    .file-row.new-output {
+      background: rgba(16, 185, 129, 0.24);
+      border: 1px solid rgba(16, 185, 129, 0.55);
+      color: #6ee7b7;
+      font-weight: 700;
+      display: none;
+    }
+
+    .file-name {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .file-tag {
+      font-size: 9px;
+      font-weight: 800;
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.14);
+    }
+
+    .finder-statusbar {
+      height: 26px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      color: #94a3b8;
+    }
+
+    /* =====================================================
+       EXACT M.I.R.A. v2.5 CHAMELEON FROSTED RADIAL WHEEL
+       SIZE = 310, OUTER_R = 122, INNER_R = 52
+       ===================================================== */
+    .mira-stage {
+      position: absolute;
+      width: 310px;
+      height: 310px;
+      top: 255px;
+      left: 345px;
+      z-index: 60;
+      pointer-events: none;
+      opacity: 0;
+      transform: scale(0.84);
+      filter: drop-shadow(0 18px 34px rgba(0, 0, 0, 0.62));
+    }
+
+    /* Real Frosted Backdrop Ring (Clips blur strictly to the donut ring!) */
+    .mira-frosted-backdrop {
+      position: absolute;
+      top: 27px;
+      left: 27px;
+      width: 256px;
+      height: 256px;
+      border-radius: 50%;
+      backdrop-filter: blur(22px) saturate(190%);
+      -webkit-backdrop-filter: blur(22px) saturate(190%);
+      mask-image: radial-gradient(circle, transparent 48px, black 49px);
+      -webkit-mask-image: radial-gradient(circle, transparent 48px, black 49px);
+    }
+
+    .mira-svg {
+      position: relative;
+      width: 310px;
+      height: 310px;
+      overflow: visible;
+      z-index: 2;
+    }
+
+    /* Glossy Toast Banner (Exact Match to showGlossyToast) */
+    .mira-toast {
+      position: absolute;
+      right: 36px;
+      bottom: 84px;
+      background: rgba(15, 23, 42, 0.94);
+      backdrop-filter: blur(20px);
+      border: 1.2px solid rgba(255, 255, 255, 0.45);
+      border-radius: 16px;
+      padding: 12px 18px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      box-shadow: 0 20px 45px rgba(0, 0, 0, 0.6);
+      z-index: 90;
+      opacity: 0;
+      transform: translateY(25px) scale(0.95);
+    }
+
+    .toast-text {
+      font-size: 13px;
+      font-weight: 700;
+      color: #ffffff;
+      letter-spacing: 0.01em;
+    }
+
+    .toast-reveal-btn {
+      background: #38bdf8;
+      color: #0f172a;
+      font-size: 11.5px;
+      font-weight: 800;
+      padding: 5px 12px;
+      border-radius: 8px;
+    }
+
+    /* Floating Keycap HUD (Cmd + E / Space / 1) */
+    .shortcut-hud {
+      position: absolute;
+      top: 72px;
+      left: 50%;
+      transform: translateX(-50%) scale(0.9);
+      background: rgba(15, 23, 42, 0.88);
+      backdrop-filter: blur(20px);
+      border: 1.5px solid rgba(56, 189, 248, 0.65);
+      padding: 10px 22px;
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55), 0 0 24px rgba(56, 189, 248, 0.3);
+      z-index: 85;
+      opacity: 0;
+    }
+
+    .keycap {
+      background: linear-gradient(180deg, #334155 0%, #1e293b 100%);
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      border-bottom-width: 3px;
+      padding: 4px 10px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 800;
+      color: #ffffff;
+    }
+
+    .hud-desc {
+      font-size: 13px;
+      font-weight: 700;
+      color: #bae6fd;
+      letter-spacing: 0.03em;
+    }
+
+    /* High-precision macOS Pointer Cursor */
+    .mac-cursor {
+      position: absolute;
+      top: 500px;
+      left: 650px;
+      width: 26px;
+      height: 26px;
+      z-index: 120;
+      pointer-events: none;
+      filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.55));
+    }
+
+    /* Cinematic Lower-Third Subtitle Bar */
+    .cinema-caption {
+      position: absolute;
+      bottom: 26px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 100;
+      padding: 10px 26px;
+      border-radius: 999px;
+      background: rgba(2, 6, 23, 0.82);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      box-shadow: 0 14px 36px rgba(0, 0, 0, 0.65);
+    }
+
+    .cap-badge {
+      background: linear-gradient(135deg, #38bdf8, #2563eb);
+      color: #ffffff;
+      font-size: 10px;
+      font-weight: 800;
+      padding: 4px 10px;
+      border-radius: 999px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .cap-text {
+      font-size: 14.5px;
+      font-weight: 600;
+      color: #f8fafc;
+      letter-spacing: 0.02em;
+      white-space: nowrap;
+    }
+
+    /* Final Hero End-Card Overlay */
+    .hero-finale {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at 50% 45%, rgba(15, 23, 42, 0.92) 0%, rgba(2, 6, 23, 0.98) 100%);
+      backdrop-filter: blur(28px);
+      z-index: 150;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .finale-orb {
+      width: 112px;
+      height: 112px;
+      border-radius: 50%;
+      border: 3px solid #38bdf8;
+      box-shadow: 0 0 50px rgba(56, 189, 248, 0.55), inset 0 0 28px rgba(56, 189, 248, 0.35);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 24px;
+      position: relative;
+    }
+
+    .finale-orb::after {
+      content: "M.I.R.A.";
+      font-size: 16px;
+      font-weight: 900;
+      letter-spacing: 0.14em;
+      color: #ffffff;
+    }
+
+    .finale-title {
+      font-size: 52px;
+      font-weight: 900;
+      letter-spacing: -0.02em;
+      background: linear-gradient(135deg, #ffffff 0%, #bae6fd 50%, #38bdf8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 10px;
+    }
+
+    .finale-sub {
+      font-size: 18px;
+      color: #94a3b8;
+      font-weight: 500;
+      margin-bottom: 28px;
+    }
+
+    .finale-pills {
+      display: flex;
+      gap: 12px;
+    }
+
+    .f-pill {
+      padding: 8px 18px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      font-size: 13px;
+      font-weight: 700;
+      color: #e2e8f0;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Studio Control Bar -->
+  <div class="studio-controls" id="studioBar">
+    <button class="ctrl-btn" onclick="restartShowcase()">▶ Replay 18s Video</button>
+    <button class="ctrl-btn rec" onclick="startVideoExport()">⏺ Record & Save Video (18s)</button>
+    <button class="ctrl-btn" onclick="toggleCleanFullscreen()">⛶ Fullscreen Cinema (F)</button>
+  </div>
+
+  <!-- 16:9 Cinema Stage -->
+  <div class="cinema-viewport" id="viewport">
+    <div class="camera-rig" id="cameraRig">
+
+      <!-- Exact Midnight Blue Wallpaper -->
+      <div class="desktop-wallpaper">
+        <div class="wallpaper-grid-v"></div>
+        <div class="wallpaper-grid-h"></div>
+      </div>
+
+      <!-- macOS Menu Bar -->
+      <div class="mac-menubar">
+        <div class="menu-left">
+          <span></span>
+          <span class="menu-bold">Finder</span>
+          <span>File</span>
+          <span>Edit</span>
+          <span>View</span>
+          <span>Go</span>
+          <span>Window</span>
+          <span>Help</span>
+        </div>
+        <div class="menu-right">
+          <div class="mira-tray-pill" id="miraTrayPill">
+            <div class="mira-tray-icon"><div class="mira-tray-dot"></div></div>
+            <span style="font-size:11px;font-weight:700;color:#bae6fd;">M.I.R.A.</span>
+          </div>
+          <span class="battery-pill">80%</span>
+          <span>Wi-Fi</span>
+          <span>Fri 6:07 PM</span>
+        </div>
+      </div>
+
+      <!-- Left Desktop Widgets (From User's Screenshot) -->
+      <div class="desktop-widgets">
+        <div class="photo-widget"></div>
+        <div class="clock-row">
+          <div class="widget-box">
+            <div class="clock-big">6:07</div>
+          </div>
+          <div class="widget-box">
+            <div class="clock-sub">LON</div>
+            <div class="clock-big">1:37</div>
+          </div>
+        </div>
+        <div class="battery-widget">
+          <div class="bat-ring">💻</div>
+          <div class="bat-pct">80%</div>
+        </div>
+      </div>
+
+      <!-- macOS Finder Window (Downloads) -->
+      <div class="finder-window" id="finderWin">
+        <div class="finder-sidebar">
+          <div class="traffic-lights">
+            <div class="tl r"></div>
+            <div class="tl y"></div>
+            <div class="tl g"></div>
+          </div>
+          <div class="side-item">🕒 Recents</div>
+          <div class="side-item">👥 Shared</div>
+          <div class="side-group-label">Favourites</div>
+          <div class="side-item">🚀 Applications</div>
+          <div class="side-item">🖥 Desktop</div>
+          <div class="side-item">📄 Documents</div>
+          <div class="side-item active">⬇ Downloads</div>
+          <div class="side-group-label">Locations</div>
+          <div class="side-item">🏠 sreerangav</div>
+          <div class="side-item">📡 AirDrop</div>
+          <div class="side-item">🗑 Bin</div>
+        </div>
+
+        <div class="finder-main">
+          <div class="finder-toolbar">
+            <span>&lt; &nbsp; &gt; &nbsp;&nbsp; Downloads</span>
+            <span style="font-size:12px;color:#94a3b8;">☷ &nbsp; ⌕</span>
+          </div>
+          <div class="finder-header-row">
+            <span>Name</span>
+            <span>Size</span>
+            <span>Kind</span>
+            <span>Date Added</span>
+          </div>
+          <div class="finder-list">
+            <div class="file-row" id="rowReadme">
+              <div class="file-name"><span class="file-tag">MD</span> ReadMe.md</div>
+              <span>5 KB</span><span>Markdown</span><span>Yesterday at 10:33 PM</span>
+            </div>
+            <div class="file-row" id="rowCsv">
+              <div class="file-name"><span class="file-tag">CSV</span> netflix_viewing_history_sample.csv</div>
+              <span>6 KB</span><span>CSV Document</span><span>6 Oct 2026 at 11:16 PM</span>
+            </div>
+            <div class="file-row" id="rowMhtml">
+              <div class="file-name"><span class="file-tag">WEB</span> Building an Intelligent...Google Gemini.mhtml</div>
+              <span>3.1 MB</span><span>MIME Document</span><span>29 Sep 2026 at 11:14 PM</span>
+            </div>
+            <div class="file-row" id="rowPng">
+              <div class="file-name"><span class="file-tag">PNG</span> Gemini_Generated_I...3fuosp3fuosp3.png</div>
+              <span>8.9 MB</span><span>PNG image</span><span>22 Aug 2026 at 11:42 AM</span>
+            </div>
+            <div class="file-row" id="rowPdf1">
+              <div class="file-name"><span class="file-tag" style="background:#ef4444;">PDF</span> 20260318153522-JAVA Module1notes.pdf</div>
+              <span>882 KB</span><span>PDF Document</span><span>11 Jun 2026 at 11:08 PM</span>
+            </div>
+            <div class="file-row new-output" id="rowCreatedDocx">
+              <div class="file-name"><span class="file-tag" style="background:#10b981;color:#022c22;">DOCX</span> 20260318153522-JAVA Module1notes.docx</div>
+              <span>412 KB</span><span>Word Document</span><span>Just now</span>
+            </div>
+            <div class="file-row" id="rowPdf2">
+              <div class="file-name"><span class="file-tag" style="background:#ef4444;">PDF</span> 20260318153540-JAVA Module2 notes.pdf</div>
+              <span>681 KB</span><span>PDF Document</span><span>11 Jun 2026 at 11:08 PM</span>
+            </div>
+            <div class="file-row" id="rowPdf3">
+              <div class="file-name"><span class="file-tag" style="background:#ef4444;">PDF</span> 20260318153606-JAVA Module3 notes.pdf</div>
+              <span>723 KB</span><span>PDF Document</span><span>11 Jun 2026 at 11:08 PM</span>
+            </div>
+            <div class="file-row new-output" id="rowMergedPdf">
+              <div class="file-name"><span class="file-tag" style="background:#38bdf8;color:#0f172a;">PDF</span> Merged_JAVA_Modules_1_to_3.pdf</div>
+              <span>2.2 MB</span><span>PDF Document</span><span>Just now</span>
+            </div>
+            <div class="file-row" id="rowPpt">
+              <div class="file-name"><span class="file-tag">PDF</span> Smart Irrigation System PPT Outline.pdf</div>
+              <span>278 KB</span><span>PDF Document</span><span>11 Jun 2026 at 11:08 PM</span>
+            </div>
+          </div>
+          <div class="finder-statusbar" id="finderStatus">
+            Macintosh HD ▸ Users ▸ sreerangav ▸ Downloads ▸ 20260318153522-JAVA Module1notes.pdf
+          </div>
+        </div>
+      </div>
+
+      <!-- Exact M.I.R.A. v2.5 Chameleon Frosted Glass Wheel -->
+      <div class="mira-stage" id="miraWheel">
+        <div class="mira-frosted-backdrop"></div>
+        <svg class="mira-svg" id="miraSvg" viewBox="0 0 310 310"></svg>
+      </div>
+
+      <!-- Shortcut Keycap HUD -->
+      <div class="shortcut-hud" id="shortcutHud">
+        <span class="keycap" id="hudKey1">⌘ Cmd</span>
+        <span style="font-weight:900;color:#fff;">+</span>
+        <span class="keycap" id="hudKey2">E</span>
+        <span class="hud-desc" id="hudDesc">Summon at Cursor</span>
+      </div>
+
+      <!-- Glossy Toast Banner -->
+      <div class="mira-toast" id="miraToast">
+        <span class="toast-text" id="toastLabel">✦  Created 20260318153522-JAVA Module1notes.docx</span>
+        <span class="toast-reveal-btn">Reveal</span>
+      </div>
+
+      <!-- Animated macOS Cursor -->
+      <svg class="mac-cursor" id="macCursor" viewBox="0 0 28 28">
+        <path d="M4 2 L4 22 L9.5 16.8 L13.8 25 L16.8 23.5 L12.5 15.2 L20 15.2 Z"
+              fill="#0f172a" stroke="#ffffff" stroke-width="2" stroke-linejoin="round" />
+      </svg>
+
+    </div>
+
+    <!-- Lower-Third Narrative Caption -->
+    <div class="cinema-caption" id="captionBox">
+      <span class="cap-badge" id="capBadge">SILENT DAEMON</span>
+      <span class="cap-text" id="capText">Runs invisibly in the background — zero Dock clutter</span>
+    </div>
+
+    <!-- Finale End Card -->
+    <div class="hero-finale" id="heroFinale">
+      <div class="finale-orb"></div>
+      <div class="finale-title">M.I.R.A. v2.5</div>
+      <div class="finale-sub">100% Offline Chameleon Radial Converter for macOS &amp; Windows</div>
+      <div class="finale-pills">
+        <span class="f-pill">⌘ + E / Ctrl + E</span>
+        <span class="f-pill">Auto OS Theme Sync</span>
+        <span class="f-pill">60-FPS Thinking Orb</span>
+        <span class="f-pill">Multi-File Batch &amp; Merge</span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ============================================================================
+    // EXACT JAVA GEOMETRY CLONE FROM RadialConverterApp.java
+    // SIZE = 310, OUTER_R = 122, INNER_R = 52, GAP_DEGREES = 3.6
+    // ============================================================================
+    const SIZE = 310, CX = 155, CY = 155, OUTER_R = 122, INNER_R = 52, GAP_DEGREES = 3.6;
+
+    const THEMES = {
+      cyan: {
+        dark: true,
+        accent: "#38bdf8",
+        accentBright: "#7dd3fc",
+        baseStops: ["rgba(22, 27, 40, 0.90)", "rgba(14, 18, 28, 0.92)", "rgba(18, 78, 118, 0.90)"],
+        hoverStops: ["rgba(56, 189, 248, 0.96)", "rgba(37, 99, 235, 0.96)"],
+        hubStops: ["rgba(34, 42, 60, 0.96)", "rgba(12, 16, 26, 0.98)"],
+        textNormal: "#f8fafc",
+        pillBg: "rgba(0, 0, 0, 0.40)"
+      },
+      purple: {
+        dark: true,
+        accent: "#a855f7",
+        accentBright: "#d8b4fe",
+        baseStops: ["rgba(26, 20, 44, 0.90)", "rgba(16, 12, 30, 0.92)", "rgba(88, 28, 135, 0.90)"],
+        hoverStops: ["rgba(168, 85, 247, 0.96)", "rgba(126, 34, 206, 0.96)"],
+        hubStops: ["rgba(40, 28, 64, 0.96)", "rgba(15, 10, 28, 0.98)"],
+        textNormal: "#f8fafc",
+        pillBg: "rgba(0, 0, 0, 0.40)"
+      },
+      pearl: {
+        dark: false,
+        accent: "#0284c7",
+        accentBright: "#0369a1",
+        baseStops: ["rgba(252, 254, 255, 0.94)", "rgba(238, 244, 250, 0.92)", "rgba(186, 230, 253, 0.92)"],
+        hoverStops: ["rgba(2, 132, 199, 0.95)", "rgba(37, 99, 235, 0.96)"],
+        hubStops: ["rgba(255, 255, 255, 0.98)", "rgba(226, 232, 240, 0.98)"],
+        textNormal: "#0f172a",
+        pillBg: "rgba(255, 255, 255, 0.75)"
+      },
+      gold: {
+        dark: true,
+        accent: "#d4af37",
+        accentBright: "#fde047",
+        baseStops: ["rgba(24, 22, 18, 0.92)", "rgba(14, 13, 10, 0.94)", "rgba(92, 72, 18, 0.90)"],
+        hoverStops: ["rgba(212, 175, 55, 0.96)", "rgba(161, 98, 7, 0.96)"],
+        hubStops: ["rgba(38, 34, 24, 0.96)", "rgba(14, 12, 8, 0.98)"],
+        textNormal: "#f8fafc",
+        pillBg: "rgba(0, 0, 0, 0.45)"
+      }
+    };
+
+    let wheelState = {
+      slices: ["DOCX", "TXT", "HTML", "JPG", "PNG"],
+      hoveredIndex: -1,
+      extBadge: "PDF",
+      subBadge: "SPACE:TOOLS",
+      themeKey: "cyan",
+      isConverting: false,
+      convertingLabel: "DOCX",
+      orbAngle: 0,
+      orbPulse: 0.5
+    };
+
+    function createDonutSlicePath(cx, cy, rIn, rOut, startDeg, sweepDeg) {
+      const startRad = (startDeg * Math.PI) / 180;
+      const endRad = ((startDeg + sweepDeg) * Math.PI) / 180;
+      const x1Out = cx + rOut * Math.cos(startRad);
+      const y1Out = cy - rOut * Math.sin(startRad);
+      const x2Out = cx + rOut * Math.cos(endRad);
+      const y2Out = cy - rOut * Math.sin(endRad);
+      const x2In = cx + rIn * Math.cos(endRad);
+      const y2In = cy - rIn * Math.sin(endRad);
+      const x1In = cx + rIn * Math.cos(startRad);
+      const y1In = cy - rIn * Math.sin(startRad);
+
+      return [
+        `M ${x1Out.toFixed(2)} ${y1Out.toFixed(2)}`,
+        `A ${rOut} ${rOut} 0 0 1 ${x2Out.toFixed(2)} ${y2Out.toFixed(2)}`,
+        `L ${x2In.toFixed(2)} ${y2In.toFixed(2)}`,
+        `A ${rIn} ${rIn} 0 0 0 ${x1In.toFixed(2)} ${y1In.toFixed(2)}`,
+        "Z"
+      ].join(" ");
+    }
+
+    function describeOpenArc(cx, cy, r, startDeg, extentDeg) {
+      const sRad = (startDeg * Math.PI) / 180;
+      const eRad = ((startDeg + extentDeg) * Math.PI) / 180;
+      const x1 = cx + r * Math.cos(sRad);
+      const y1 = cy - r * Math.sin(sRad);
+      const x2 = cx + r * Math.cos(eRad);
+      const y2 = cy - r * Math.sin(eRad);
+      const largeArc = Math.abs(extentDeg) > 180 ? 1 : 0;
+      const sweepFlag = extentDeg >= 0 ? 0 : 1;
+      return `M ${x1.toFixed(2)} ${y1.toFixed(2)} A ${r} ${r} 0 ${largeArc} ${sweepFlag} ${x2.toFixed(2)} ${y2.toFixed(2)}`;
+    }
+
+    function renderMiraWheel() {
+      const svg = document.getElementById("miraSvg");
+      const t = THEMES[wheelState.themeKey] || THEMES.cyan;
+      const count = wheelState.slices.length;
+      const step = 360 / count;
+      const rimBase = t.dark ? "rgba(255,255,255,0.38)" : "rgba(15,23,42,0.24)";
+
+      let html = `
+        <defs>
+          <linearGradient id="sliceBase" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="${t.baseStops[0]}" />
+            <stop offset="55%" stop-color="${t.baseStops[1]}" />
+            <stop offset="100%" stop-color="${t.baseStops[2]}" />
+          </linearGradient>
+          <linearGradient id="sliceHover" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="${t.hoverStops[0]}" />
+            <stop offset="100%" stop-color="${t.hoverStops[1]}" />
+          </linearGradient>
+          <radialGradient id="hubGrad" cx="35%" cy="35%" r="85%">
+            <stop offset="0%" stop-color="${t.hubStops[0]}" />
+            <stop offset="100%" stop-color="${t.hubStops[1]}" />
+          </radialGradient>
+          <radialGradient id="orbCoreGlow" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="${t.accent}" stop-opacity="0.68" />
+            <stop offset="100%" stop-color="${t.accent}" stop-opacity="0" />
+          </radialGradient>
+        </defs>
+        <circle cx="${CX}" cy="${CY}" r="${OUTER_R + 7}" fill="transparent" stroke="${t.accent}" stroke-opacity="0.48" stroke-width="1.2" />
+      `;
+
+      for (let i = 0; i < count; i++) {
+        const name = wheelState.slices[i];
+        const isHovered = (!wheelState.isConverting && i === wheelState.hoveredIndex) ||
+                          (wheelState.isConverting && name === wheelState.convertingLabel);
+        const rOut = isHovered ? OUTER_R + 5 : OUTER_R;
+        const startAngle = 90 + (step / 2) - (i * step) - (GAP_DEGREES / 2);
+        const sweepAngle = -(step - GAP_DEGREES);
+        const d = createDonutSlicePath(CX, CY, INNER_R, rOut, startAngle, sweepAngle);
+        const opacity = (wheelState.isConverting && !isHovered) ? 0.55 : 1.0;
+
+        const midRad = ((90 - i * step) * Math.PI) / 180;
+        const textR = (INNER_R + rOut) / 2;
+        const tx = CX + textR * Math.cos(midRad);
+        const ty = CY - textR * Math.sin(midRad);
+        const pillW = Math.max(name.length * 7.6 + 16, 46);
+        const pillH = 19;
+
+        html += `
+          <g opacity="${opacity}">
+            <path d="${d}"
+                  fill="${isHovered ? 'url(#sliceHover)' : 'url(#sliceBase)'}"
+                  stroke="${isHovered ? '#ffffff' : rimBase}"
+                  stroke-width="${isHovered ? 1.8 : 1.15}"
+                  stroke-linejoin="round" />
+            <rect x="${(tx - pillW / 2).toFixed(1)}" y="${(ty - pillH / 2).toFixed(1)}"
+                  width="${pillW.toFixed(1)}" height="${pillH}" rx="9.5"
+                  fill="${isHovered ? 'rgba(0,0,0,0.28)' : t.pillBg}"
+                  stroke="${isHovered ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.16)'}"
+                  stroke-width="0.8" />
+            <text x="${tx.toFixed(1)}" y="${(ty + 3.8).toFixed(1)}"
+                  fill="${isHovered ? '#ffffff' : t.textNormal}"
+                  font-size="${count > 5 ? 10 : 11}" font-weight="800"
+                  text-anchor="middle">${name}</text>
+          </g>
+        `;
+      }
+
+      // Center Medallion
+      html += `
+        <circle cx="${CX}" cy="${CY}" r="${INNER_R - 4}"
+                fill="url(#hubGrad)"
+                stroke="${wheelState.isConverting ? 'transparent' : t.accent}"
+                stroke-width="1.8" />
+      `;
+
+      if (wheelState.isConverting) {
+        const pulseR = (INNER_R - 12) * (0.82 + 0.18 * wheelState.orbPulse);
+        const outerArc = describeOpenArc(CX, CY, INNER_R - 5, wheelState.orbAngle, 115);
+        const innerArc = describeOpenArc(CX, CY, INNER_R - 11, -wheelState.orbAngle * 1.35, 85);
+
+        html += `
+          <circle cx="${CX}" cy="${CY}" r="${pulseR.toFixed(1)}" fill="url(#orbCoreGlow)" />
+          <path d="${outerArc}" fill="none" stroke="${t.accentBright}" stroke-width="3.2" stroke-linecap="round" />
+          <path d="${innerArc}" fill="none" stroke="rgba(255,255,255,0.92)" stroke-width="1.9" stroke-linecap="round" />
+          <text x="${CX}" y="${CY - 1}" fill="#ffffff" font-size="9.5" font-weight="900" text-anchor="middle">WORKING</text>
+          <text x="${CX}" y="${CY + 10}" fill="${t.accentBright}" font-size="8" font-weight="800" text-anchor="middle">-&gt; ${wheelState.convertingLabel}</text>
+        `;
+      } else {
+        html += `
+          <text x="${CX}" y="${CY - 1}" fill="${t.accentBright}" font-size="11.5" font-weight="900" text-anchor="middle">${wheelState.extBadge}</text>
+          <text x="${CX}" y="${CY + 11}" fill="${t.textNormal}" fill-opacity="0.78" font-size="7.2" font-weight="800" text-anchor="middle">${wheelState.subBadge}</text>
+        `;
+      }
+
+      svg.innerHTML = html;
+    }
+
+    // 60-FPS Thinking Orb Ticker
+    gsap.ticker.add((time) => {
+      if (wheelState.isConverting) {
+        wheelState.orbAngle = (time * 320) % 360;
+        wheelState.orbPulse = 0.5 + 0.5 * Math.sin(time * 6.5);
+        renderMiraWheel();
+      }
+    });
+
+    function setCaption(badge, text) {
+      document.getElementById("capBadge").textContent = badge;
+      document.getElementById("capText").textContent = text;
+    }
+
+    function showHud(k1, k2, desc) {
+      document.getElementById("hudKey1").textContent = k1;
+      const key2El = document.getElementById("hudKey2");
+      key2El.style.display = k2 ? "inline-block" : "none";
+      key2El.textContent = k2;
+      document.getElementById("hudDesc").textContent = desc;
+      gsap.fromTo("#shortcutHud",
+        { opacity: 0, y: -10, scale: 0.9 },
+        { opacity: 1, y: 0, scale: 1, duration: 0.22, ease: "back.out(1.8)" }
+      );
+      gsap.to("#shortcutHud", { opacity: 0, y: -8, duration: 0.25, delay: 1.25 });
+    }
+
+    // ============================================================================
+    // MASTER 18-SECOND CINEMATIC LAUNCH TIMELINE
+    // ============================================================================
+    let masterTl;
+
+    function buildMasterTimeline() {
+      if (masterTl) masterTl.kill();
+
+      // Reset DOM state
+      document.querySelectorAll(".file-row").forEach(r => r.classList.remove("selected"));
+      document.getElementById("rowCreatedDocx").style.display = "none";
+      document.getElementById("rowMergedPdf").style.display = "none";
+      document.getElementById("finderWin").classList.remove("light-theme");
+      gsap.set("#heroFinale", { opacity: 0 });
+      gsap.set("#miraWheel", { opacity: 0, scale: 0.84, left: 345, top: 255 });
+      gsap.set("#miraToast", { opacity: 0, y: 25 });
+      gsap.set("#macCursor", { left: 740, top: 480 });
+      gsap.set("#cameraRig", { scale: 1.0, rotateX: 0, rotateY: 0, x: 0, y: 0 });
+
+      wheelState = {
+        slices: ["DOCX", "TXT", "HTML", "JPG", "PNG"],
+        hoveredIndex: -1,
+        extBadge: "PDF",
+        subBadge: "SPACE:TOOLS",
+        themeKey: "cyan",
+        isConverting: false,
+        convertingLabel: "DOCX",
+        orbAngle: 0,
+        orbPulse: 0.5
+      };
+      renderMiraWheel();
+
+      masterTl = gsap.timeline();
+
+      // SCENE 1 (0.0s - 2.6s): Silent Background Daemon & File Selection
+      masterTl.call(() => setCaption("01 • SILENT OS DAEMON", "Runs invisibly in the macOS Menu Bar & Windows Tray — zero Dock clutter"), null, 0);
+      masterTl.fromTo("#miraTrayPill",
+        { scale: 1, boxShadow: "0 0 0px #38bdf8" },
+        { scale: 1.14, boxShadow: "0 0 18px #38bdf8", yoyo: true, repeat: 3, duration: 0.35 }, 0.2);
+
+      // Move cursor to JAVA Module1notes.pdf
+      masterTl.to("#macCursor", { left: 530, top: 356, duration: 1.1, ease: "power3.inOut" }, 0.8);
+      masterTl.call(() => {
+        document.getElementById("rowPdf1").classList.add("selected");
+      }, null, 1.9);
+
+      // Press Cmd + E
+      masterTl.call(() => {
+        showHud("⌘ Cmd", "E", "Summon M.I.R.A. at Cursor");
+        setCaption("02 • CHAMELEON FROSTED GLASS", "Real-time backdrop blur & high-contrast capsules over any Finder text");
+      }, null, 2.2);
+
+      // SCENE 2 (2.5s - 7.5s): Summon Radial Menu -> Hover DOCX -> 60-FPS Thinking Orb -> Toast
+      masterTl.to("#cameraRig", { scale: 1.16, x: 60, y: -30, rotateY: -4, rotateX: 3, duration: 1.1, ease: "power2.out" }, 2.4);
+      masterTl.set("#miraWheel", { left: 375, top: 205 }, 2.45);
+      masterTl.to("#miraWheel", { opacity: 1, scale: 1, duration: 0.22, ease: "back.out(1.7)" }, 2.45);
+
+      // Hover TXT then DOCX
+      masterTl.to("#macCursor", { left: 605, top: 318, duration: 0.55, ease: "power2.out" }, 3.0);
+      masterTl.call(() => { wheelState.hoveredIndex = 1; renderMiraWheel(); }, null, 3.35);
+
+      masterTl.to("#macCursor", { left: 530, top: 270, duration: 0.55, ease: "power2.out" }, 3.7);
+      masterTl.call(() => { wheelState.hoveredIndex = 0; renderMiraWheel(); }, null, 4.05);
+
+      // Click DOCX -> Activate Center Thinking Orb!
+      masterTl.call(() => {
+        setCaption("03 • 60-FPS THINKING ORB", "Dual counter-rotating energy core signals live offline conversion");
+        wheelState.isConverting = true;
+        wheelState.convertingLabel = "DOCX";
+        renderMiraWheel();
+      }, null, 4.6);
+
+      // Complete conversion -> Scale out wheel & slide in Toast + Created DOCX row
+      masterTl.call(() => {
+        wheelState.isConverting = false;
+        renderMiraWheel();
+      }, null, 6.3);
+      masterTl.to("#miraWheel", { opacity: 0, scale: 0.82, duration: 0.18 }, 6.3);
+      masterTl.call(() => {
+        document.getElementById("rowCreatedDocx").style.display = "grid";
+        document.getElementById("toastLabel").textContent = "✦  Created 20260318153522-JAVA Module1notes.docx";
+      }, null, 6.45);
+      masterTl.to("#miraToast", { opacity: 1, y: 0, duration: 0.3, ease: "back.out(1.6)" }, 6.45);
+      masterTl.to("#miraToast", { opacity: 0, y: 20, duration: 0.25 }, 8.2);
+
+      // SCENE 3 (7.6s - 12.6s): Select CSV + Dynamic OS Theme & Accent Sync + Spacebar Tools
+      masterTl.to("#macCursor", { left: 510, top: 268, duration: 0.65, ease: "power2.inOut" }, 7.5);
+      masterTl.call(() => {
+        document.querySelectorAll(".file-row").forEach(r => r.classList.remove("selected"));
+        document.getElementById("rowCsv").classList.add("selected");
+        wheelState.slices = ["JSON", "XLSX", "HTML", "PDF", "TXT"];
+        wheelState.extBadge = "CSV";
+        wheelState.subBadge = "SPACE:TOOLS";
+        wheelState.hoveredIndex = 0;
+        wheelState.themeKey = "cyan";
+        renderMiraWheel();
+        setCaption("04 • AUTO OS THEME & ACCENT SYNC", "Dynamically syncs with macOS & Windows Dark/Light modes & custom accents");
+      }, null, 8.1);
+
+      masterTl.set("#miraWheel", { left: 355, top: 135 }, 8.2);
+      masterTl.to("#miraWheel", { opacity: 1, scale: 1, duration: 0.22, ease: "back.out(1.7)" }, 8.2);
+
+      // Morph across themes: Purple -> Frosted Pearl Light Mode -> Obsidian Champagne Gold
+      masterTl.call(() => {
+        showHud("Tab ⇥", "", "Sync Theme: Royal Purple Accent");
+        wheelState.themeKey = "purple";
+        wheelState.hoveredIndex = 1;
+        renderMiraWheel();
+      }, null, 9.0);
+
+      masterTl.call(() => {
+        showHud("Tab ⇥", "", "Sync Theme: Frosted Pearl (Light OS Mode)");
+        document.getElementById("finderWin").classList.add("light-theme");
+        wheelState.themeKey = "pearl";
+        wheelState.hoveredIndex = 2;
+        renderMiraWheel();
+      }, null, 10.0);
+
+      masterTl.call(() => {
+        showHud("Space", "", "Toggle Power Tools Ring");
+        document.getElementById("finderWin").classList.remove("light-theme");
+        wheelState.themeKey = "gold";
+        wheelState.slices = ["SORT A-Z", "DEDUPE", "SUMMARY", "COPY TXT"];
+        wheelState.extBadge = "TOOLS";
+        wheelState.subBadge = "CSV MODE";
+        wheelState.hoveredIndex = 0;
+        renderMiraWheel();
+      }, null, 11.1);
+
+      masterTl.to("#miraWheel", { opacity: 0, scale: 0.82, duration: 0.18 }, 12.3);
+
+      // SCENE 4 (12.5s - 16.0s): Multi-File Batch Selection & Offline PDF Merge
+      masterTl.call(() => {
+        setCaption("05 • MULTI-FILE BATCH & PDF MERGE", "Highlight multiple PDFs or images to merge, batch-convert, or archive offline");
+        document.querySelectorAll(".file-row").forEach(r => r.classList.remove("selected"));
+        document.getElementById("rowPdf1").classList.add("selected");
+        document.getElementById("rowPdf2").classList.add("selected");
+        document.getElementById("rowPdf3").classList.add("selected");
+
+        wheelState.themeKey = "cyan";
+        wheelState.slices = ["MERGE PDFS", "BATCH TXT", "BATCH PNG", "ZIP ARCHIVE"];
+        wheelState.extBadge = "3 FILES";
+        wheelState.subBadge = "BATCH MODE";
+        wheelState.hoveredIndex = 0;
+        renderMiraWheel();
+        showHud("⌘ Cmd", "E", "Batch Mode: 3 PDFs Selected");
+      }, null, 12.5);
+
+      masterTl.set("#miraWheel", { left: 385, top: 220 }, 12.7);
+      masterTl.to("#miraWheel", { opacity: 1, scale: 1, duration: 0.22, ease: "back.out(1.7)" }, 12.7);
+
+      // Trigger MERGE PDFS via Hotkey 1 -> Thinking Orb
+      masterTl.call(() => {
+        wheelState.isConverting = true;
+        wheelState.convertingLabel = "MERGE PDFS";
+        renderMiraWheel();
+      }, null, 13.6);
+
+      masterTl.call(() => {
+        wheelState.isConverting = false;
+        renderMiraWheel();
+        document.getElementById("rowMergedPdf").style.display = "grid";
+        document.getElementById("toastLabel").textContent = "✦  Merged 3 PDFs → Merged_JAVA_Modules_1_to_3.pdf";
+      }, null, 15.0);
+
+      masterTl.to("#miraWheel", { opacity: 0, scale: 0.82, duration: 0.18 }, 15.0);
+      masterTl.to("#miraToast", { opacity: 1, y: 0, duration: 0.28, ease: "back.out(1.6)" }, 15.05);
+      masterTl.to("#cameraRig", { scale: 1.0, x: 0, y: 0, rotateX: 0, rotateY: 0, duration: 0.9, ease: "power3.inOut" }, 15.0);
+
+      // SCENE 5 (16.2s - 18.5s): Hero Finale End-Card
+      masterTl.to("#heroFinale", { opacity: 1, duration: 0.55, ease: "power2.out" }, 16.2);
+      masterTl.fromTo(".finale-orb", { scale: 0.7, rotate: -45 }, { scale: 1, rotate: 0, duration: 0.6, ease: "back.out(1.7)" }, 16.25);
+    }
+
+    function restartShowcase() {
+      buildMasterTimeline();
+    }
+
+    function toggleCleanFullscreen() {
+      document.body.classList.toggle("cinema-clean");
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      }
+      restartShowcase();
+    }
+
+    // Press F to toggle clean fullscreen, R to replay
+    window.addEventListener("keydown", (e) => {
+      if (e.key.toLowerCase() === "f") toggleCleanFullscreen();
+      if (e.key.toLowerCase() === "r") restartShowcase();
+      if (e.key === "Escape") document.body.classList.remove("cinema-clean");
+    });
+
+    // Built-in 60-FPS Video Exporter (.webm / .mp4)
+    async function startVideoExport() {
+      try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+          video: { frameRate: 60 },
+          audio: false,
+          preferCurrentTab: true
+        });
+        document.body.classList.add("cinema-clean");
+        const mime = MediaRecorder.isTypeSupported("video/mp4") ? "video/mp4" : "video/webm;codecs=vp9";
+        const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 16000000 });
+        const chunks = [];
+        recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+        recorder.onstop = () => {
+          document.body.classList.remove("cinema-clean");
+          stream.getTracks().forEach(t => t.stop());
+          const blob = new Blob(chunks, { type: mime });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = mime.includes("mp4") ? "MIRA-Launch-Teaser.mp4" : "MIRA-Launch-Teaser.webm";
+          a.click();
+        };
+        recorder.start();
+        restartShowcase();
+        setTimeout(() => {
+          if (recorder.state === "recording") recorder.stop();
+        }, 18600);
+      } catch (err) {
+        alert("Select the current browser tab when prompted to auto-save the 18s video, or press 'F' and record with Cmd+Shift+5.");
+      }
+    }
+
+    window.addEventListener("DOMContentLoaded", () => {
+      buildMasterTimeline();
+    });
+  </script>
+</body>
+</html>
