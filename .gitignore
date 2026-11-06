@@ -1,8 +1,24 @@
+# Maven & Java build outputs
 target/
+dist/
 *.class
 *.jar
+*.war
+*.ear
+*.nar
+hs_err_pid*
+
+# macOS & Windows system files
 .DS_Store
+Thumbs.db
+
+# IDE & Editor folders
+.idea/
 .vscode/
-.settings/
-.classpath
-.project
+*.iml
+*.ipr
+*.iws
+
+# Node / Tauri legacy artifacts
+node_modules/
+mira-app/
