@@ -1,0 +1,98 @@
+name: Build & Publish M.I.R.A. Installers (macOS & Windows)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-installers:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform_name: macOS
+            installer_type: dmg
+          - os: windows-latest
+            platform_name: Windows
+            installer_type: exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout M.I.R.A. Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Compile & Package Shaded Fat-JAR
+        run: mvn clean package -DskipTests -Dmaven.compiler.source=21 -Dmaven.compiler.target=21
+
+      - name: Stage Shaded JAR for jpackage
+        shell: bash
+        run: |
+          mkdir -p jpackage-input dist
+          cp target/mira-1.0.0-shaded.jar jpackage-input/mira-1.0.0-shaded.jar
+
+      - name: Build Native macOS (.dmg) Installer
+        if: matrix.os == 'macos-latest'
+        run: |
+          jpackage \
+            --input jpackage-input \
+            --name "MIRA" \
+            --main-jar mira-1.0.0-shaded.jar \
+            --main-class com.radialtool.Launcher \
+            --type dmg \
+            --app-version 2.5.0 \
+            --vendor "Sreeranga V" \
+            --java-options "-Dapple.awt.UIElement=true" \
+            --dest dist
+          cp jpackage-input/mira-1.0.0-shaded.jar dist/MIRA-2.5.0-Universal.jar
+
+      - name: Ensure WiX Toolset is Available (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command candle.exe -ErrorAction SilentlyContinue)) {
+            choco install wixtoolset -y --no-progress
+            echo "C:\Program Files (x86)\WiX Toolset v3.14\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+
+      - name: Build Native Windows (.exe) Installer
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          jpackage `
+            --input jpackage-input `
+            --name "MIRA" `
+            --main-jar mira-1.0.0-shaded.jar `
+            --main-class com.radialtool.Launcher `
+            --type exe `
+            --app-version 2.5.0 `
+            --vendor "Sreeranga V" `
+            --win-shortcut `
+            --win-menu `
+            --dest dist
+
+      - name: Upload Installer Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MIRA-${{ matrix.platform_name }}-Installer
+          path: dist/*
+
+      - name: Attach Installers to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
