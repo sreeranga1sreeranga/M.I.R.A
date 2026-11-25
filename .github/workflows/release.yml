@@ -28,6 +28,16 @@ jobs:
       - name: Checkout M.I.R.A. Source Code
         uses: actions/checkout@v4
 
+      - name: Determine App Version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "APP_VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "APP_VERSION=2.5.1" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up JDK 21 (Temurin)
         uses: actions/setup-java@v4
         with:
@@ -53,20 +63,20 @@ jobs:
             --main-jar mira-1.0.0-shaded.jar \
             --main-class com.radialtool.Launcher \
             --type dmg \
-            --app-version 2.5.0 \
+            --app-version "${{ steps.version.outputs.APP_VERSION }}" \
             --vendor "Sreeranga V" \
             --java-options "-Dapple.awt.UIElement=true" \
             --dest dist
-          cp jpackage-input/mira-1.0.0-shaded.jar dist/MIRA-2.5.0-Universal.jar
+          cp jpackage-input/mira-1.0.0-shaded.jar "dist/MIRA-${{ steps.version.outputs.APP_VERSION }}-Universal.jar"
 
-      - name: Ensure WiX Toolset is Available (Windows)
+      - name: Install Portable WiX Toolset v3.14 (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          if (-not (Get-Command candle.exe -ErrorAction SilentlyContinue)) {
-            choco install wixtoolset -y --no-progress
-            echo "C:\Program Files (x86)\WiX Toolset v3.14\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          }
+          $wixUrl = "https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip"
+          Invoke-WebRequest -Uri $wixUrl -OutFile "wix314.zip"
+          Expand-Archive -Path "wix314.zip" -DestinationPath "C:\wix314" -Force
+          echo "C:\wix314" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Build Native Windows (.exe) Installer
         if: matrix.os == 'windows-latest'
@@ -78,7 +88,7 @@ jobs:
             --main-jar mira-1.0.0-shaded.jar `
             --main-class com.radialtool.Launcher `
             --type exe `
-            --app-version 2.5.0 `
+            --app-version "${{ steps.version.outputs.APP_VERSION }}" `
             --vendor "Sreeranga V" `
             --win-shortcut `
             --win-menu `
@@ -90,9 +100,20 @@ jobs:
           name: MIRA-${{ matrix.platform_name }}-Installer
           path: dist/*
 
-      - name: Attach Installers to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+  publish-release:
+    needs: build-installers
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download All Built Installers
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish GitHub Release with macOS & Windows Installers
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          files: release-assets/*
           generate_release_notes: true
